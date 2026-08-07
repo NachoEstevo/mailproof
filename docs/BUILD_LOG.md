@@ -206,9 +206,122 @@ The pre-commit review (§74) caught `midnight-level-db/` staged for commit —
 the `levelPrivateStateProvider` store, which holds the subject secret. Now
 gitignored.
 
+---
+
+## Gate 3 attempt — acquiring a DKIM-signed `.eml`
+
+- Goal: a real email with a resolvable DKIM signature.
+- Result: **blocked**. Recorded here because the failure is informative.
+
+§29.2 suggests sending a demo email from a domain with DKIM. The obvious
+cheapest version of that — send it from Gmail to yourself — **does not work**,
+confirmed empirically rather than assumed. Gmail's own "Show original" for the
+resulting message reports:
+
+```text
+Creado a las: 7 de agosto de 2026 a las 15:03 (entregado en 0 segundos)
+```
+
+No `Received` headers, no `DKIM-Signature`, 460 bytes total. Self-addressed
+mail never leaves Google's infrastructure, so it is never signed. Any blueprint
+built on such a file would fail at proving time with no clear cause.
+
+Working alternatives, in order of preference:
+
+1. Send from a **second mailbox** (any provider) to the Gmail account. Crossing
+   providers forces a real signature, and the signed copy lands somewhere
+   readable. Keeps the flight-cancellation script intact.
+2. Use an email **already received** from a third party. Real DKIM from a
+   recognisable domain, but the claim changes to whatever that email says —
+   the §1.4 / §56 fallback.
+3. A **controlled domain** with DKIM configured. Best claim strength.
+
+None of these can be completed without the account holder. Work continued on
+everything downstream, which is identical in all three cases.
+
+### Privacy note
+
+The inspector (§29.5) was written before this attempt and immediately reported
+`No DKIM-Signature header. This message cannot back a proof.` — which is what
+it is for. The downloaded file contained a real address and was deleted rather
+than kept; `fixtures/private-emails/` is gitignored.
+
+---
+
+## Gate 6 — Attestor service
+
+- Goal: turn a verified ZK Email proof into a signed `ClaimAttestationV1`.
+- Result: **pass**, with proof verification behind an interface pending a real
+  blueprint.
+
+`@zk-email/sdk@2.0.11` installed at the exact pin (§24.3). Its API was read
+from the installed `.d.ts` rather than from documentation:
+
+```text
+initZkEmailSdk()          -> { getBlueprint(slug), unPackProof(packed), ... }
+blueprint.verifyProofData(publicOutputs: string, proofData: string) -> Promise<boolean>
+blueprint.props.senderDomain / .decomposedRegexes[].name
+proof.packProof() / sdk.unPackProof()   — the client -> server transport
+```
+
+Installing it required dropping TypeScript from 6.0.3 to 5.9.3: the SDK's peer
+range is `^5.0.0`. The SDK is the pinned, load-bearing dependency; TypeScript 6
+came from the scaffold and nothing here needs it. Resolved by moving TypeScript
+rather than forcing the peer.
+
+### Design
+
+Verification sits behind a `ProofVerifier` interface. Only *is this proof
+valid* depends on ZK Email; policy, nullifier derivation, canonicalisation and
+signing do not — so the blocked blueprint does not block the bridge.
+
+- `ZkEmailProofVerifier` — the real one.
+- `FixtureProofVerifier` — tests and local development. Accepts only
+  pre-registered submissions, reports `isCryptographic: false`, and the server
+  refuses to start with it unless explicitly permitted.
+
+`config/blueprints.json` carries `status: "pending"` for the un-compiled slug,
+and the real verifier **refuses to run** against it. Verified against the
+running service:
+
+```json
+{ "error": "BLUEPRINT_NOT_ALLOWED",
+  "detail": "blueprint mailproof/FlightCancellation@v1 is marked pending; pin it before accepting proofs" }
+```
+
+Named public outputs are read from the *verified* outputs, never from a
+separate client-supplied map — otherwise a caller could pair a valid proof of
+one thing with the claimed outputs of another (§41.15). The index-to-name
+mapping is not in the SDK's published types, which is the specific thing that
+must be checked before a blueprint is flipped to `pinned`.
+
+### Results
+
+```bash
+npm run attestor:test   # 31 passed
+npm test                # 96 passed (6 files)
+npm run typecheck       # exit 0
+```
+
+A-01…A-15 plus the HTTP surface. **A-14** is the load-bearing one: a claim
+signed by the attestor verifies inside the compiled Compact circuit via
+`pureCircuits.verifySchnorr`, and its canonical hash matches the circuit's
+byte for byte. The bridge closes.
+
+Also verified against a live server, not just injected requests: `/health`
+reports the verifier and public key without key material, and `rawEmail` in a
+request body is rejected as `INVALID_REQUEST` rather than silently dropped.
+
+### Open concerns
+
+- `npm audit` reports 22 vulnerabilities (8 high), all transitive through the
+  SDK's ethers/ws chain — the EVM on-chain verification path this project does
+  not use. Not fixable without unpinning the SDK.
+- The SDK prints `WARNING: Missing strong random number source` on import. It
+  does not affect signing here: keys come from `node:crypto` and nonces are
+  derived deterministically.
+
 ### Next action
 
-Gates 3–5 need a real DKIM-signed `.eml` and a blueprint compiled on
-registry.zk.email. Neither can be produced from here. Work that does not
-depend on them — the `.eml` inspector, the attestor service — continues
-meanwhile.
+P1: `pause` and `rotateAttestor`, which close C-10 and C-11 — the last two
+rows of the §40.2 matrix.

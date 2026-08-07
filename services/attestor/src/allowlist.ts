@@ -1,0 +1,107 @@
+/**
+ * Blueprint allowlist (§32.5).
+ *
+ * The attestor never accepts an arbitrary slug. Everything it is willing to
+ * sign for is declared in config/blueprints.json and validated on load, so a
+ * malformed entry fails at startup rather than at the first request.
+ */
+import { readFileSync } from 'node:fs';
+import { z } from 'zod';
+
+import { CLAIM_TYPE, type ClaimTypeName } from '../../../packages/shared/constants.js';
+import { ATTESTOR_ERROR, AttestorError } from './errors.js';
+
+const blueprintSchema = z
+  .object({
+    key: z.string().min(1),
+    /**
+     * "pending" means the slug is not yet compiled on the registry. The real
+     * verifier refuses to run against it — see zk-email-verifier.ts.
+     */
+    status: z.enum(['pending', 'pinned']),
+    slug: z
+      .string()
+      .regex(/^[\w.-]+\/[\w.-]+@v\d+$/, 'slug must be owner/Name@vN — never `latest`'),
+    claimType: z.enum(Object.keys(CLAIM_TYPE) as [ClaimTypeName, ...ClaimTypeName[]]),
+    issuerDomain: z.string().min(1),
+    campaigns: z.array(z.string().min(1)).min(1),
+    requiredOutputs: z.array(z.string().min(1)).min(1),
+    markerOutput: z.string().min(1),
+    uniqueIdOutput: z.string().min(1),
+    markerPattern: z.string().min(1),
+  })
+  .strict()
+  .superRefine((entry, ctx) => {
+    for (const name of [entry.markerOutput, entry.uniqueIdOutput]) {
+      if (!entry.requiredOutputs.includes(name)) {
+        ctx.addIssue({
+          code: 'custom',
+          message: `requiredOutputs must include "${name}"`,
+        });
+      }
+    }
+    try {
+      new RegExp(entry.markerPattern);
+    } catch {
+      ctx.addIssue({ code: 'custom', message: 'markerPattern is not a valid regex' });
+    }
+    // §41.8: a bare substring match accepts "has not been cancelled".
+    if (!entry.markerPattern.startsWith('^') || !entry.markerPattern.endsWith('$')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'markerPattern must be anchored with ^ and $ so a negated sentence cannot match',
+      });
+    }
+  });
+
+const fileSchema = z.object({
+  $comment: z.unknown().optional(),
+  blueprints: z.array(blueprintSchema).min(1),
+});
+
+export interface BlueprintPolicy {
+  readonly key: string;
+  readonly status: 'pending' | 'pinned';
+  readonly slug: string;
+  readonly claimType: ClaimTypeName;
+  readonly issuerDomain: string;
+  readonly campaigns: readonly string[];
+  readonly requiredOutputs: readonly string[];
+  readonly markerOutput: string;
+  readonly uniqueIdOutput: string;
+  readonly markerPattern: string;
+}
+
+export class BlueprintAllowlist {
+  private readonly bySlug: Map<string, BlueprintPolicy>;
+
+  constructor(policies: readonly BlueprintPolicy[]) {
+    this.bySlug = new Map(policies.map((p) => [p.slug, p]));
+    if (this.bySlug.size !== policies.length) {
+      throw new Error('blueprint allowlist contains duplicate slugs');
+    }
+  }
+
+  /** Exact match only — no prefix, no version coercion. */
+  require(slug: string): BlueprintPolicy {
+    const policy = this.bySlug.get(slug);
+    if (!policy) throw new AttestorError(ATTESTOR_ERROR.BLUEPRINT_NOT_ALLOWED);
+    return policy;
+  }
+
+  get slugs(): string[] {
+    return [...this.bySlug.keys()];
+  }
+}
+
+export function parseAllowlist(raw: unknown): BlueprintAllowlist {
+  const parsed = fileSchema.safeParse(raw);
+  if (!parsed.success) {
+    throw new Error(`invalid blueprint allowlist: ${parsed.error.issues[0]?.message}`);
+  }
+  return new BlueprintAllowlist(parsed.data.blueprints);
+}
+
+export function loadAllowlist(path: string): BlueprintAllowlist {
+  return parseAllowlist(JSON.parse(readFileSync(path, 'utf8')));
+}

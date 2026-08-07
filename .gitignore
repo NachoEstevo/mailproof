@@ -40,3 +40,7 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+
+# Dedicated browser profile for driving the ZK Email registry flow.
+# Holds real login sessions. Never commit.
+.browser-profile/

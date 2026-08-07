@@ -1,0 +1,26 @@
+{
+  "$comment": [
+    "Blueprint allowlist (§20.9, §68.2). The attestor signs claims only for",
+    "entries listed here, and only for the exact pinned slug — never `latest`.",
+    "",
+    "`status` is load-bearing, not documentation. While it is \"pending\", the",
+    "real ZK Email verifier refuses to run: the slug below has not been",
+    "compiled on registry.zk.email yet, so accepting proofs against it would",
+    "mean verifying nothing. Flip to \"pinned\" only once the slug resolves and",
+    "issuerDomain matches the DKIM d= the blueprint actually pins."
+  ],
+  "blueprints": [
+    {
+      "key": "flight-cancel-v1",
+      "status": "pending",
+      "slug": "mailproof/FlightCancellation@v1",
+      "claimType": "FLIGHT_CANCELLED",
+      "issuerDomain": "demo-airline.example",
+      "campaigns": ["travel-insurance-demo-2026"],
+      "requiredOutputs": ["cancellationMarker", "uniqueClaimId"],
+      "markerOutput": "cancellationMarker",
+      "uniqueIdOutput": "uniqueClaimId",
+      "markerPattern": "^Your flight [A-Z0-9-]{2,12} has been cancelled\\.?$"
+    }
+  ]
+}
