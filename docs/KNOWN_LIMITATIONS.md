@@ -51,9 +51,33 @@ Appendix K. Update this file whenever scope changes.
     raw email — but "private from the attestor" applies to the message body,
     not to the fact that a request happened.
 
+## The demo as it stands
+
+13. **Proof verification runs on a fixture.** No ZK Email blueprint has been
+    compiled yet, so the attestor signs from canned evidence when started with
+    `MAILPROOF_ALLOW_FIXTURE_VERIFIER=1`. Everything downstream is real. This
+    is disclosed in three places — a startup banner, `cryptographicVerification:
+    false` on `/health`, and an amber banner in the UI — and the real verifier
+    refuses to run against an un-pinned blueprint rather than pretending.
+14. **A Gmail-to-self email cannot be used.** Self-addressed mail never leaves
+    Google's infrastructure and is therefore never DKIM-signed. Confirmed
+    empirically: "delivered in 0 seconds", no `Received` headers, no signature.
+    A second mailbox, a received third-party email, or a controlled domain is
+    required.
+15. **The wallet lives in the web server, not the browser.** The demo app
+    holds the devnet wallet itself instead of connecting to a browser wallet
+    via the DApp Connector API. That was chosen for reliability on stage; it
+    means the frontend is chain-connected but not wallet-connected, which is
+    weaker against the hackathon's frontend criterion.
+16. **The sample `.eml` carries a placeholder DKIM signature.** It exercises
+    the inspector and the UI. It does not verify, and the inspector says so.
+
 ## Operations
 
-13. **Browser proving can be slow.** The demo has a disclosed fallback to a
+17. **Browser proving can be slow.** The demo has a disclosed fallback to a
     locally generated proof fixture; it is never presented as live.
-14. **The demo may run on local devnet.** Public deployment is a bonus, not a
+18. **The demo runs on local devnet.** Public deployment is a bonus, not a
     requirement (§37.3).
+19. **A demo reset requires restarting the services.** `npm run demo:reset`
+    redeploys under a fresh campaign; the attestor and web app read the
+    campaign at startup, so both must be restarted afterwards.

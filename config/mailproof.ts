@@ -5,6 +5,9 @@
  * that the deploy script, the CLI and the attestor cannot disagree about
  * which campaign, blueprint or issuer they are talking about.
  */
+import { readFileSync, writeFileSync } from 'node:fs';
+import * as path from 'node:path';
+
 import type { JubjubPoint } from '@midnight-ntwrk/compact-runtime';
 
 import {
@@ -56,8 +59,45 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
   return value;
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): MailProofConfig {
-  const campaign = env.MAILPROOF_CAMPAIGN_ID?.trim() || DEFAULTS.campaign;
+/**
+ * Campaign chosen by the last `npm run demo:reset`.
+ *
+ * A campaign is baked into the contract at construction, so a fresh campaign
+ * means a fresh set of nullifiers — which is what makes the demo repeatable
+ * without hand-editing state mid-pitch (§50.5). Persisted to a file rather
+ * than an env var so the deploy script, the attestor and the web app all see
+ * the same value without having to be launched from one shell.
+ */
+export const DEMO_STATE_FILE = '.mailproof-demo.json';
+
+function persistedCampaign(cwd: string): string | null {
+  try {
+    const raw = readFileSync(path.join(cwd, DEMO_STATE_FILE), 'utf8');
+    const parsed = JSON.parse(raw) as { campaign?: unknown };
+    return typeof parsed.campaign === 'string' && parsed.campaign ? parsed.campaign : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDemoCampaign(campaign: string, cwd = process.cwd()): void {
+  writeFileSync(
+    path.join(cwd, DEMO_STATE_FILE),
+    `${JSON.stringify({ campaign, createdAt: new Date().toISOString() }, null, 2)}\n`,
+  );
+}
+
+/**
+ * @param cwd Where to look for the demo-reset file. Injectable so callers —
+ * and tests — are not at the mercy of the working directory.
+ */
+export function loadConfig(
+  env: NodeJS.ProcessEnv = process.env,
+  cwd: string = process.cwd(),
+): MailProofConfig {
+  // Explicit env wins, then the last demo reset, then the built-in default.
+  const campaign =
+    env.MAILPROOF_CAMPAIGN_ID?.trim() || persistedCampaign(cwd) || DEFAULTS.campaign;
   const blueprintSlug = env.MAILPROOF_BLUEPRINT_ID?.trim() || DEFAULTS.blueprintSlug;
   const issuerDomain = env.MAILPROOF_ISSUER_DOMAIN?.trim() || DEFAULTS.issuerDomain;
   const claimTypeName = (env.MAILPROOF_CLAIM_TYPE?.trim() || DEFAULTS.claimType) as ClaimTypeName;

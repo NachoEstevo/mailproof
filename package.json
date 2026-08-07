@@ -24,7 +24,9 @@
     "verify": "npm run typecheck && npm run test",
     "attestor:dev": "tsx services/attestor/src/server.ts",
     "attestor:test": "vitest run services/attestor",
-    "contract:test": "vitest run contracts/tests"
+    "contract:test": "vitest run contracts/tests",
+    "web:dev": "tsx apps/web/server.ts",
+    "demo:reset": "tsx scripts/reset-demo.ts"
   },
   "comments": {
     "overrides": [

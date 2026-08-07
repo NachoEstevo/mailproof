@@ -1,0 +1,24 @@
+DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/relaxed;
+	d=demo-airline.example; s=mp2026; t=1786000000;
+	h=from:to:subject:date:message-id;
+	bh=SYNTHETICBODYHASHNOTREALSYNTHETICBODYHASH=;
+	b=SYNTHETICSIGNATURENOTREALSYNTHETICSIGNATURENOTREALSYNTHETICSIGNATURE
+	  NOTREALSYNTHETICSIGNATURENOTREALSYNTHETICSIGNATURENOTREAL==
+From: Demo Air <noreply@demo-airline.example>
+To: ana.demo@example.test
+Subject: Your flight MP401 has been cancelled
+Date: Fri, 07 Aug 2026 09:15:00 +0000
+Message-ID: <mp401-8f2a19@demo-airline.example>
+Content-Type: text/plain; charset=utf-8
+
+Hello Ana Demo,
+
+Your flight MP401 has been cancelled.
+
+Booking reference: MP-8F2A19
+Claim code: CLAIM-DEMO-0001
+Passenger: Ana Demo
+Fare paid: USD 487.00
+
+SYNTHETIC DEMO EMAIL - the DKIM signature above is a placeholder and does
+not verify. Structure only, for exercising the inspector and the UI.

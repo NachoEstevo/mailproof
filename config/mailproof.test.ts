@@ -5,6 +5,10 @@
  * seed material at 32 bytes, which made the deploy script crash on its own
  * built-in devnet seed.
  */
+import { mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import * as path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -19,9 +23,15 @@ import { sign, verify } from '../packages/shared/schnorr.js';
 
 const EMPTY_ENV: NodeJS.ProcessEnv = {};
 
+/**
+ * A directory with no `.mailproof-demo.json`, so these assertions describe the
+ * built-in defaults rather than whatever the last demo reset happened to pick.
+ */
+const NO_DEMO_STATE = mkdtempSync(path.join(tmpdir(), 'mailproof-cfg-'));
+
 describe('loadConfig', () => {
   it('falls back to the demo deployment when nothing is set', () => {
-    const config = loadConfig(EMPTY_ENV);
+    const config = loadConfig(EMPTY_ENV, NO_DEMO_STATE);
     expect(config.campaign).toBe('travel-insurance-demo-2026');
     expect(config.claimType).toBe(1n);
     expect(config.campaignId).toHaveLength(32);
@@ -122,7 +132,7 @@ describe('attestor key loading', () => {
     const { secretKey } = loadAttestorSecretKey({ allowDevnetDemoKey: false, env });
     const { publicKey } = loadAttestorPublicKey({ allowDevnetDemoKey: false, env });
 
-    const config = loadConfig(EMPTY_ENV);
+    const config = loadConfig(EMPTY_ENV, NO_DEMO_STATE);
     const message = canonicalClaimHash({
       version: 1n,
       claimType: config.claimType,

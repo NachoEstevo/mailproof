@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MailProof — turn emails into private proofs</title>
+    <link rel="stylesheet" href="/styles.css" />
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="mark">✉</span>
+        <div>
+          <h1>MailProof</h1>
+          <p>Turn emails into private proofs.</p>
+        </div>
+      </div>
+      <div class="chips" id="chips">
+        <span class="chip loading">connecting…</span>
+      </div>
+    </header>
+
+    <!-- Shown whenever the attestor is not verifying real proofs. Must never
+         be possible to miss during a live demo. -->
+    <div class="disclosure" id="fixture-banner" hidden>
+      <strong>Fixture verifier active.</strong>
+      No ZK Email proof is being checked. Everything downstream — the signed
+      claim, the Compact verification, the one-time redemption — is real.
+    </div>
+
+    <main>
+      <!-- ── Left: the evidence ─────────────────────────────────────────── -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="step">1</span>
+          <h2>The evidence</h2>
+        </div>
+
+        <div class="dropzone" id="dropzone" tabindex="0" role="button"
+             aria-label="Drop a .eml file, or press Enter to load the sample">
+          <p class="drop-title">Drop the cancellation email</p>
+          <p class="drop-sub">.eml — stays on this machine</p>
+          <button class="link" id="load-sample" type="button">or load the synthetic sample</button>
+        </div>
+
+        <div id="inspection" hidden>
+          <div class="kv" id="eml-summary"></div>
+          <h3>DKIM</h3>
+          <div id="dkim"></div>
+          <p class="note">
+            Structure only. The signature is verified inside the ZK Email
+            circuit, not here.
+          </p>
+        </div>
+      </section>
+
+      <!-- ── Middle: the pipeline ───────────────────────────────────────── -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="step">2</span>
+          <h2>The claim</h2>
+        </div>
+
+        <ol class="stages" id="stages">
+          <li data-id="attestor"><span class="dot"></span><span class="label">Attestor verifies and signs</span><span class="detail"></span></li>
+          <li data-id="submit"><span class="dot"></span><span class="label">Compact verifies on Midnight</span><span class="detail"></span></li>
+          <li data-id="confirm"><span class="dot"></span><span class="label">One-time claim consumed</span><span class="detail"></span></li>
+        </ol>
+
+        <button class="primary" id="redeem" disabled>Verify claim</button>
+        <button class="secondary" id="replay" hidden>Try to claim again</button>
+
+        <div class="result" id="result" hidden></div>
+      </section>
+
+      <!-- ── Right: what was disclosed ──────────────────────────────────── -->
+      <section class="panel">
+        <div class="panel-head">
+          <span class="step">3</span>
+          <h2>What the verifier learns</h2>
+        </div>
+
+        <h3 class="revealed">Revealed</h3>
+        <ul class="disclose revealed-list">
+          <li>The claim type — a flight cancellation</li>
+          <li>The trusted sender domain</li>
+          <li>That the claim is valid</li>
+          <li>That it has not been used before</li>
+        </ul>
+
+        <h3 class="private">Stays private</h3>
+        <ul class="disclose private-list">
+          <li>The full email</li>
+          <li>The recipient address</li>
+          <li>The booking reference</li>
+          <li>The fare paid</li>
+          <li>Everything else in the inbox</li>
+        </ul>
+
+        <div class="onchain" id="onchain"></div>
+      </section>
+    </main>
+
+    <footer>
+      <span id="footer-note">The sender never integrates anything. It just sends normal email.</span>
+    </footer>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

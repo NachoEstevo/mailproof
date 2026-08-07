@@ -1,7 +1,7 @@
 {
   "$comment": [
-    "Blueprint allowlist (§20.9, §68.2). The attestor signs claims only for",
-    "entries listed here, and only for the exact pinned slug — never `latest`.",
+    "Blueprint allowlist (\u00a720.9, \u00a768.2). The attestor signs claims only for",
+    "entries listed here, and only for the exact pinned slug \u2014 never `latest`.",
     "",
     "`status` is load-bearing, not documentation. While it is \"pending\", the",
     "real ZK Email verifier refuses to run: the slug below has not been",
@@ -16,8 +16,13 @@
       "slug": "mailproof/FlightCancellation@v1",
       "claimType": "FLIGHT_CANCELLED",
       "issuerDomain": "demo-airline.example",
-      "campaigns": ["travel-insurance-demo-2026"],
-      "requiredOutputs": ["cancellationMarker", "uniqueClaimId"],
+      "campaigns": [
+        "mailproof-demo-2608071839"
+      ],
+      "requiredOutputs": [
+        "cancellationMarker",
+        "uniqueClaimId"
+      ],
       "markerOutput": "cancellationMarker",
       "uniqueIdOutput": "uniqueClaimId",
       "markerPattern": "^Your flight [A-Z0-9-]{2,12} has been cancelled\\.?$"
