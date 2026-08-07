@@ -58,44 +58,48 @@ function openMessage() {
 }
 
 /**
- * Pull the original source out of whatever "Show original" answers with.
+ * Undo the escaping Gmail applies when it prints the source into a page.
  *
- * That endpoint has returned plain text in some Gmail builds and an HTML
- * viewer in others, so accept both rather than betting on one.
+ * Not DOMParser: Gmail enforces Trusted Types, and parseFromString throws
+ * under that policy. These five are the whole set Gmail emits, and getting
+ * the order wrong (&amp; before the others) would corrupt the bytes DKIM
+ * signed — which is why &amp; is last.
  */
-async function readSource(response) {
-  const text = await response.text();
-  if (looksLikeRfc822(text)) return text;
-
-  const doc = new DOMParser().parseFromString(text, 'text/html');
-  for (const pre of doc.querySelectorAll('pre')) {
-    const candidate = pre.textContent ?? '';
-    if (looksLikeRfc822(candidate)) return candidate;
-  }
-
-  // The viewer offers a "Download Original" link that serves message/rfc822.
-  const download = doc.querySelector('a[href*="view=att"]');
-  if (download) {
-    const url = new URL(download.getAttribute('href'), location.origin).toString();
-    const raw = await fetch(url, { credentials: 'include' }).then((r) => r.text());
-    if (looksLikeRfc822(raw)) return raw;
-  }
-
-  return null;
+function unescapeHtml(text) {
+  return text
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 /**
- * `ik` is Gmail's per-session request key. It lives in a page global, so the
- * panel reads it from the MAIN world and hands it in — a content script runs
- * isolated and cannot see it.
+ * Where the original bytes can be had, best first.
+ *
+ * "Download Original" serves the message verbatim — no HTML, no escaping, no
+ * session key. "Show original" needs `ik` and prints the source into a <pre>,
+ * so it is the fallback. The two identify the message differently: `th` takes
+ * the hex id Gmail puts in the DOM, `permmsgid` takes it in decimal.
  */
-function sourceUrls(ik, message) {
-  const base = `${location.origin}/mail/u/${message.accountIndex}/`;
-  const permmsgid = `msg-f:${message.legacyMessageId}`;
-  return [
-    `${base}?ui=2&ik=${encodeURIComponent(ik)}&view=om&permmsgid=${permmsgid}`,
-    `${base}?view=om&permmsgid=${permmsgid}`,
+function sources(ik, message) {
+  const base = `${location.origin}/mail/u/${message.accountIndex}`;
+  const hex = message.legacyMessageId;
+  const decimal = BigInt(`0x${hex}`).toString(10);
+
+  const attempts = [
+    { url: `${base}?view=att&th=${hex}&attid=0&disp=comp&safe=1&zw`, extract: (t) => t },
   ];
+  if (ik) {
+    attempts.push({
+      url: `${base}/?ui=2&ik=${encodeURIComponent(ik)}&view=om&permmsgid=msg-f:${decimal}`,
+      extract: (text) => {
+        const match = /<pre[^>]*id="raw_message_text"[^>]*>([\s\S]*?)<\/pre>/.exec(text);
+        return match ? unescapeHtml(match[1]) : null;
+      },
+    });
+  }
+  return attempts;
 }
 
 async function capture(ik) {
@@ -103,20 +107,17 @@ async function capture(ik) {
   if (!message) {
     return { ok: false, reason: 'no-message', detail: 'Open a single email first.' };
   }
-  if (!ik) {
-    return { ok: false, reason: 'no-session-key', detail: "Could not read Gmail's session key." };
-  }
 
   const failures = [];
-  for (const url of sourceUrls(ik, message)) {
+  for (const { url, extract } of sources(ik, message)) {
     try {
       const response = await fetch(url, { credentials: 'include' });
       if (!response.ok) {
         failures.push(`HTTP ${response.status}`);
         continue;
       }
-      const raw = await readSource(response);
-      if (raw) return { ok: true, raw, subject: message.subject };
+      const raw = extract(await response.text());
+      if (raw && looksLikeRfc822(raw)) return { ok: true, raw, subject: message.subject };
       failures.push('response was not a raw message');
     } catch (error) {
       failures.push(error instanceof Error ? error.message : 'fetch failed');
