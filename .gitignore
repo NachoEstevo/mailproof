@@ -5,9 +5,17 @@
 *.pem
 *.key
 
-# Private email fixtures — never commit a real .eml
+# Midnight local state — .midnight-state.json holds wallet seeds and the
+# 24-word recovery phrase. Never commit it.
+.midnight-state.json
+.midnight-wallet-state/
+deployment.json
+
+# Private email fixtures — never commit a real .eml.
+# Synthetic demo fixtures under fixtures/emails/ are allowed (see §75).
 fixtures/private-emails/
 *.eml
+!fixtures/emails/*.eml
 
 # Dependencies and build output
 node_modules/
@@ -21,6 +29,8 @@ coverage/
 .turbo/
 *.tsbuildinfo
 .vite/
+logs/
+*.log
 
 # OS
 .DS_Store
