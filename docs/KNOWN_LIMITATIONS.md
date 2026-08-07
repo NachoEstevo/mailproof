@@ -31,6 +31,17 @@ Appendix K. Update this file whenever scope changes.
 6. **The signature scheme is assembled, not audited.** Textbook Schnorr over
    the stdlib's embedded curve, cross-checked between two independent
    implementations. That is not the same as a reviewed cryptographic library.
+6b. **An off-curve announcement traps the runtime instead of rejecting.**
+   `redeemClaim` range-checks the signature scalar precisely so a bad scalar
+   fails as a rejected signature, but `sig.announcement` gets no equivalent
+   guard and cannot: Compact 0.31.1 exposes no on-curve predicate
+   (`isOnCurve`, `isPrimeOrder`, `assertOnCurve` are all unbound) and
+   `JubjubPoint` is opaque, so the curve equation cannot be checked by hand
+   either. Verified empirically: `R = (1,1)` and `R = (0,0)` fail with
+   `unreachable`, which is not one of the stable §42.3 error codes, while the
+   identity `(0,1)` rejects cleanly as `invalid attestor signature`. The cost
+   is a clear error message, not soundness — `c = H(R, P, m)` still binds `R`,
+   and no forgery follows from an invalid point.
 
 ## Scope
 
@@ -79,11 +90,26 @@ Appendix K. Update this file whenever scope changes.
     empirically: "delivered in 0 seconds", no `Received` headers, no signature.
     A second mailbox, a received third-party email, or a controlled domain is
     required.
-15. **The wallet lives in the web server, not the browser.** The demo app
-    holds the devnet wallet itself instead of connecting to a browser wallet
-    via the DApp Connector API. That was chosen for reliability on stage; it
-    means the frontend is chain-connected but not wallet-connected, which is
-    weaker against the hackathon's frontend criterion.
+15. **Only the web UI can borrow a browser wallet; the extension cannot.**
+    The web app at `:3000` will hand balancing and submission to a connector
+    wallet when one is connected (`apps/web/wallet-bridge.ts`), falling back
+    to the devnet wallet this process holds. The side panel cannot: wallets
+    inject `window.midnight` into web pages, not into other extensions'
+    pages, so a redemption driven from the panel is always paid by the
+    daemon. The bridge itself is exercised end to end against the chain only
+    through `MAILPROOF_WALLET_SIMULATOR=1`, which is the daemon standing in
+    for a wallet — Midnight Lace cannot join a local `undeployed` devnet, so
+    the Lace-specific link is the one part of that path still unverified.
+15b. **The extension's Gmail capture depends on markup that can change.**
+    Locating the open message and fetching its source both rely on Gmail
+    internals (`data-legacy-message-id`, `view=att&th=`, `GLOBALS[9]`). Each
+    step has more than one strategy and a validation gate, and the panel
+    falls back to a file picker when they fail — but the capture button is an
+    accelerator, not the demo's critical path (D-008).
+15c. **`--load-extension` no longer works.** Chrome 137 dropped it; the flag
+    is accepted and silently ignored, and the only symptom is
+    `ERR_BLOCKED_BY_CLIENT` on the extension's own pages. Load it from
+    `chrome://extensions` with developer mode on. See `apps/extension/README.md`.
 16. **The sample `.eml` carries a placeholder DKIM signature.** It exercises
     the inspector and the UI. It does not verify, and the inspector says so.
 

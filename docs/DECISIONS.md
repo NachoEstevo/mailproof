@@ -259,3 +259,66 @@ a rotated key fails as "wrong selector" rather than as apparent tampering.
 An HTML-only message cannot back a claim: rendering HTML to text is a
 transformation this project does not implement, and matching a marker against
 HTML source would match something no reader ever saw. Extraction fails closed.
+
+---
+
+## D-008 — A browser extension as the front end, with the daemon unchanged
+
+**Date:** 2026-08-07
+**Status:** accepted
+
+### Context
+
+DKIM signs the original RFC822 bytes. Once Gmail has rendered a message those
+bytes are gone from the page, so the web demo has to ask the user to open
+"Show original", save a file, and drag it back — three manual steps in front
+of a room, and three steps a real product would never ask for. That gap is
+the one thing a web page structurally cannot close.
+
+The obvious counter-proposal, rewriting the app as an extension, would have
+put midnight-js behind a bundler in a service worker: WASM, a proof server
+connection and a wallet, all in the environment with the least room to debug
+on stage.
+
+### Decision
+
+Keep the daemon exactly as it is and add `apps/extension` as a second client
+of the same HTTP API. The side panel holds no keys, generates no proofs and
+speaks to no remote host; it reads the open message and posts it to
+`127.0.0.1:3000`, the same bytes the drop zone would have carried.
+
+Two things make that safe rather than merely convenient:
+
+- The manifest pins a `key`, which fixes the extension id. The daemon derives
+  the allowed origin from that same key at startup
+  (`packages/shared/extension-id.ts`), so its CORS rule names one origin and
+  cannot drift from the extension. `*` would have let any page or extension
+  on the machine post someone's mail into the process.
+- Capture is an accelerator, never the critical path. Locating the open
+  message and reading its source each have more than one strategy and a
+  validation gate, and the panel falls back to a file picker whenever they
+  come up empty.
+
+### Consequence
+
+The demo becomes one click beside the inbox, and the capture was verified to
+produce the message byte for byte identically to saving it by hand.
+
+Three costs, all real:
+
+- **Gmail's markup is not a contract.** Three separate details had to be
+  found empirically: `permmsgid` takes the message id in decimal while the
+  DOM carries hex, Gmail enforces Trusted Types so `DOMParser` throws, and
+  "Download Original" (`view=att&th=<hex>`) serves the message verbatim with
+  no session key — which is why it now leads. Any of these can change.
+- **A connector wallet cannot reach the panel.** Wallets inject
+  `window.midnight` into web pages, not into other extensions' pages, so the
+  bridge added in `apps/web/wallet-bridge.ts` only works from the web UI. The
+  panel is served by the daemon's own devnet wallet.
+- **Chrome 137 dropped `--load-extension`.** The flag is accepted and
+  silently ignored; the only symptom is `ERR_BLOCKED_BY_CLIENT` on the
+  extension's own pages. Loading is a manual step, or
+  `Extensions.loadUnpacked` over CDP for automation.
+
+The web UI at `:3000` is unchanged and remains the fallback if the extension
+misbehaves on the day.
