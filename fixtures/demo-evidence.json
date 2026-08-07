@@ -1,0 +1,27 @@
+{
+  "$comment": [
+    "Demo evidence for the fixture verifier. THIS IS NOT A PROOF.",
+    "",
+    "It stands in for the output of a ZK Email proof so the rest of the",
+    "pipeline — attestor policy, nullifier derivation, canonical signing,",
+    "Compact redemption, replay rejection — can be run and demonstrated before",
+    "a blueprint exists on registry.zk.email.",
+    "",
+    "Nothing here is verified cryptographically. The attestor only loads this",
+    "when MAILPROOF_ALLOW_FIXTURE_VERIFIER=1 is set explicitly, reports",
+    "cryptographicVerification: false on /health, and says so on startup.",
+    "Never present a run backed by this file as a live proof (§50.4).",
+    "",
+    "The values mirror the synthetic demo email in Appendix H."
+  ],
+  "evidence": [
+    {
+      "blueprintSlug": "mailproof/FlightCancellation@v1",
+      "publicOutputs": "[\"Your flight MP401 has been cancelled\",\"CLAIM-DEMO-0001\"]",
+      "proofData": "{\"$comment\":\"placeholder for ZK Email proof data\",\"fixture\":\"flight-cancelled-demo-0001\"}",
+      "issuerDomain": "demo-airline.example",
+      "claimMarker": "Your flight MP401 has been cancelled",
+      "uniqueClaimId": "CLAIM-DEMO-0001"
+    }
+  ]
+}

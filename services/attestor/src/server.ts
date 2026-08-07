@@ -4,6 +4,7 @@
  * `buildServer` returns the app without binding a port, so the tests drive it
  * through `inject()` instead of over a socket.
  */
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import * as path from 'node:path';
 
@@ -15,6 +16,7 @@ import { publicKeyFromSecret } from '../../../packages/shared/schnorr.js';
 import { attest } from './attest.js';
 import { loadAllowlist, type BlueprintAllowlist } from './allowlist.js';
 import { ATTESTOR_ERROR, AttestorError, toAttestorError } from './errors.js';
+import { FixtureProofVerifier, type FixtureEntry } from './fixture-verifier.js';
 import { logAttest, newRequestId, type Sink } from './logging.js';
 import { attestRequestSchema, serialiseSignedClaim } from './schema.js';
 import type { ProofVerifier } from './verifier.js';
@@ -135,6 +137,35 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   return app;
 }
 
+/**
+ * Pick the verifier.
+ *
+ * Defaults to the real one. The fixture verifier requires an explicit opt-in
+ * *and* announces itself loudly, because a fake verifier that looks real is
+ * how a project ends up demoing "the backend said true" (§8, option E).
+ */
+function resolveVerifier(env: NodeJS.ProcessEnv, moduleDir: string): ProofVerifier {
+  if (env.MAILPROOF_ALLOW_FIXTURE_VERIFIER !== '1') return new ZkEmailProofVerifier();
+
+  const file =
+    env.MAILPROOF_DEMO_EVIDENCE_FILE?.trim() ||
+    path.resolve(moduleDir, '../../../fixtures/demo-evidence.json');
+  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { evidence?: FixtureEntry[] };
+  const entries = parsed.evidence ?? [];
+
+  console.warn(
+    '\n' +
+      '  ╔════════════════════════════════════════════════════════════════╗\n' +
+      '  ║  FIXTURE VERIFIER — NO PROOF IS BEING CHECKED                  ║\n' +
+      '  ║  Claims are signed from canned evidence. Never present a run   ║\n' +
+      '  ║  backed by this as a live ZK Email proof.                      ║\n' +
+      '  ╚════════════════════════════════════════════════════════════════╝\n',
+  );
+  console.warn(`  loaded ${entries.length} demo evidence entries from ${file}\n`);
+
+  return new FixtureProofVerifier(entries);
+}
+
 /** Wire up from the environment and listen. */
 export async function start(): Promise<void> {
   const env = process.env;
@@ -158,7 +189,7 @@ export async function start(): Promise<void> {
       path.resolve(here, '../../../config/blueprints.json'),
   );
 
-  const verifier: ProofVerifier = new ZkEmailProofVerifier();
+  const verifier = resolveVerifier(env, here);
   if (!verifier.isCryptographic && env.MAILPROOF_ALLOW_FIXTURE_VERIFIER !== '1') {
     throw new AttestorError(
       ATTESTOR_ERROR.SIGNING_UNAVAILABLE,

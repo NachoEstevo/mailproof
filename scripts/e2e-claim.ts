@@ -34,6 +34,9 @@ import {
 } from '../src/contract';
 import { buildDemoSignedClaim } from '../src/fixture-claim';
 import { toHex } from '../packages/shared/hashes';
+import { deriveSubjectBinding } from '../packages/shared/claim';
+import { AttestorRejection, fetchHealth, requestAttestation } from '../src/attestor-client';
+import { readFileSync } from 'node:fs';
 
 // @ts-expect-error wallet sync requires WebSocket
 globalThis.WebSocket = WebSocket;
@@ -66,6 +69,28 @@ function parseClaimId(argv: string[]): string {
 const { network, config: networkConfig } = resolveNetwork();
 const mailproofConfig = loadConfig();
 const uniqueClaimId = parseClaimId(process.argv);
+
+/**
+ * Route the claim through the running attestor instead of signing it here.
+ *
+ * Explicit rather than an automatic fallback: silently switching signing paths
+ * would make it impossible to tell which one a demo actually exercised.
+ */
+const viaAttestor = process.argv.includes('--via-attestor');
+
+interface DemoEvidence {
+  blueprintSlug: string;
+  publicOutputs: string;
+  proofData: string;
+}
+
+function loadDemoEvidence(slug: string): DemoEvidence {
+  const file = process.env.MAILPROOF_DEMO_EVIDENCE_FILE?.trim() || 'fixtures/demo-evidence.json';
+  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { evidence?: DemoEvidence[] };
+  const entry = (parsed.evidence ?? []).find((e) => e.blueprintSlug === slug);
+  if (!entry) fail(`no demo evidence for ${slug} in ${file}`);
+  return entry;
+}
 
 async function createProviders(walletCtx: WalletContext) {
   const privateStatePassword =
@@ -147,13 +172,50 @@ async function main(): Promise<void> {
   );
 
   // ── 2 ─────────────────────────────────────────────────────────────────────
-  const { claim, signature } = buildDemoSignedClaim({
-    config: mailproofConfig,
-    subjectSecret: privateState.subjectSecret,
-    network,
-    uniqueClaimId,
-  });
-  progress(`Claim built and signed locally  (id: ${uniqueClaimId})`);
+  let claim;
+  let signature;
+
+  if (viaAttestor) {
+    const health = await fetchHealth(mailproofConfig.attestorUrl).catch((error) =>
+      fail(`attestor unreachable at ${mailproofConfig.attestorUrl}: ${error.message}`),
+    );
+    if (!health.cryptographicVerification) {
+      // Say it out loud every run. A demo must never imply a proof was checked
+      // when it was not (§50.4).
+      console.log('      ⚠ attestor is running the FIXTURE verifier — no proof is being checked');
+    }
+
+    const evidence = loadDemoEvidence(mailproofConfig.blueprintSlug);
+    const subjectBinding = toHex(
+      deriveSubjectBinding(privateState.subjectSecret, mailproofConfig.campaignId),
+    );
+
+    try {
+      const attestation = await requestAttestation(mailproofConfig.attestorUrl, {
+        blueprintId: evidence.blueprintSlug,
+        campaignId: mailproofConfig.campaign,
+        subjectBinding,
+        publicOutputs: evidence.publicOutputs,
+        proofData: evidence.proofData,
+      });
+      claim = attestation.claim;
+      signature = attestation.signature;
+      progress(`Attestor signed the claim  (verifier: ${health.verifier}, key: ${attestation.attestorKeyId})`);
+    } catch (error) {
+      if (error instanceof AttestorRejection) fail(`attestor rejected the proof: ${error.message}`);
+      throw error;
+    }
+  } else {
+    const built = buildDemoSignedClaim({
+      config: mailproofConfig,
+      subjectSecret: privateState.subjectSecret,
+      network,
+      uniqueClaimId,
+    });
+    claim = built.claim;
+    signature = built.signature;
+    progress(`Claim built and signed locally  (id: ${uniqueClaimId})`);
+  }
   console.log(`      nullifier: ${toHex(claim.claimNullifier).slice(0, 22)}…`);
 
   if (before.usedNullifiers.member(claim.claimNullifier)) {
