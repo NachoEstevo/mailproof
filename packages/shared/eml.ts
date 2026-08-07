@@ -118,6 +118,8 @@ export function getHeader(eml: ParsedEml, name: string): EmlHeader | undefined {
 }
 
 export interface DkimSignature {
+  /** The header this was parsed from, verbatim — the signature covers it. */
+  readonly header: EmlHeader;
   /** Raw tag values, keyed by tag name. */
   readonly tags: ReadonlyMap<string, string>;
   /** `v=` — must be 1. */
@@ -167,6 +169,7 @@ export function parseDkimSignature(header: EmlHeader): DkimSignature {
   const expiry = tags.get('x');
 
   return {
+    header,
     tags,
     version: tags.get('v'),
     algorithm: tags.get('a'),
