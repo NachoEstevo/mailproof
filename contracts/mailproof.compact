@@ -5,7 +5,8 @@ import CompactStandardLibrary;
 // ─────────────────────────────────────────────────────────────────────────────
 // MailProof — one-time redemption of an attestor-signed email claim.
 //
-// The attestor verifies a ZK Email proof off-chain and signs a canonical
+// The attestor verifies the email off-chain — today by checking its DKIM
+// signature directly, optionally via a ZK Email proof — and signs a canonical
 // ClaimAttestationV1. This contract verifies that signature, checks the claim
 // belongs to this campaign/blueprint/issuer, checks the caller is the subject
 // the claim was issued to, and consumes the claim's nullifier exactly once.
@@ -43,21 +44,24 @@ export struct SchnorrSignature {
 }
 
 // ─── Ledger ──────────────────────────────────────────────────────────────────
+//
+// A deployment is pinned at construction to exactly one attestor, one
+// blueprint, one issuer domain and one claim type. None of it can change
+// afterwards: there is no rotation or pause circuit yet. See §17.3, §17.4.
+//
+// The declaration order below is the on-chain state layout. Reordering it
+// orphans every already-deployed instance.
 
-/// Public key of the only attestor whose signatures this contract accepts.
 export ledger attestorPublicKey: JubjubPoint;
 
 /// Usage context. Binds claims to this deployment so a claim minted for one
 /// application cannot be replayed into another. See §12.4.
 export ledger campaignId: Bytes<32>;
 
-/// The single pinned ZK Email blueprint this deployment accepts.
 export ledger allowedBlueprintIdHash: Bytes<32>;
-
-/// The single DKIM issuer domain this deployment accepts.
 export ledger allowedIssuerDomainHash: Bytes<32>;
 
-/// The single claim type this deployment accepts (1 = FLIGHT_CANCELLED).
+/// 1 = FLIGHT_CANCELLED.
 export ledger allowedClaimType: Uint<8>;
 
 /// Nullifiers already consumed. Membership here is what makes a claim
@@ -130,7 +134,7 @@ circuit scalarInRange(hi: Uint<124>, lo: Uint<128>): Boolean {
       || ((hi == jubjubOrderHi()) && (lo < jubjubOrderLo()));
 }
 
-/// Recombine the limbs into the field element the curve operations take.
+/// Recombine the limbs; the multiplier is 2^128, the width of the low limb.
 circuit scalarToField(hi: Uint<124>, lo: Uint<128>): Field {
   return (hi as Field) * 340282366920938463463374607431768211456 + (lo as Field);
 }
@@ -235,7 +239,11 @@ export circuit redeemClaim(claim: ClaimAttestationV1, sig: SchnorrSignature): []
   );
 
   // Range-check before use: a scalar >= l would fault the runtime instead of
-  // failing as a rejected signature.
+  // failing as a rejected signature. `announcement` gets no equivalent guard
+  // and cannot: Compact 0.31.1 has no on-curve predicate and JubjubPoint is
+  // opaque, so an off-curve R traps the runtime rather than rejecting here.
+  // That costs a clear error message, not soundness — c = H(R, P, m) still
+  // binds R. See docs/KNOWN_LIMITATIONS.md.
   assert(scalarInRange(sig.responseHi, sig.responseLo), "invalid attestor signature");
   assert(
     verifySchnorr(attestorPublicKey, canonicalClaimHash(claim), sig),
