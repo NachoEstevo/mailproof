@@ -4,6 +4,7 @@ export default defineConfig({
   test: {
     include: [
       'contracts/tests/**/*.test.ts',
+      'config/**/*.test.ts',
       'packages/**/*.test.ts',
       'services/**/tests/**/*.test.ts',
       'scripts/**/*.test.ts',

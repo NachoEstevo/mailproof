@@ -3,11 +3,7 @@
  */
 import { createInterface } from 'node:readline/promises';
 import { stdin, stdout } from 'node:process';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
-import { Buffer } from 'buffer';
 
 // Midnight SDK imports
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
@@ -17,15 +13,21 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { resolveNetwork, getOrCreateWallet, formatWalletBackupNotice, getDeployment } from './network';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
-import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
 // Enable WebSocket for GraphQL subscriptions
 // @ts-expect-error Required for wallet sync
 globalThis.WebSocket = WebSocket;
 
-// Must match the privateStateId used at deploy time so the CLI reconnects to
-// the same private state. The Gate 1 contract has no witnesses (empty state).
-const PRIVATE_STATE_ID = 'mailproofPrivateState';
+import {
+  loadCompiledContract,
+  loadConfig,
+  newPrivateState,
+  PRIVATE_STATE_ID,
+  PRIVATE_STATE_STORE,
+  zkConfigPath,
+  type MailProofPrivateState,
+} from './contract';
+import { buildDemoSignedClaim } from './fixture-claim';
 
 const { network, config: networkConfig } = resolveNetwork();
 const WALLET = getOrCreateWallet(network);
@@ -35,24 +37,8 @@ const SEED = WALLET.seed;
   if (notice) console.log(notice);
 }
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'mailproof');
-
-// Load compiled contract
-const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
-
-// Check if contract is compiled
-if (!fs.existsSync(contractPath)) {
-  console.error('\n❌ Contract not compiled! Run: npm run compile\n');
-  process.exit(1);
-}
-
-const MailProof = await import(pathToFileURL(contractPath).href);
-
-const compiledContract = CompiledContract.make('mailproof', MailProof.Contract).pipe(
-  CompiledContract.withVacantWitnesses,
-  CompiledContract.withCompiledFileAssets(zkConfigPath),
-);
+const { module: MailProof, compiled: compiledContract } = await loadCompiledContract();
+const mailproofConfig = loadConfig();
 
 // ─── Providers ─────────────────────────────────────────────────────────────────
 
@@ -85,7 +71,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'mailproof-state',
+      privateStateStoreName: PRIVATE_STATE_STORE,
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -161,8 +147,19 @@ async function main() {
       compiledContract: compiledContract as any,
       contractAddress: deployment.address,
       privateStateId: PRIVATE_STATE_ID,
-      initialPrivateState: {},
+      initialPrivateState: newPrivateState() as any,
     });
+
+    // Whatever secret the store actually holds — the fallback above only
+    // applies when there is nothing stored yet. Demo claims must be bound to
+    // this exact value or the contract rejects them.
+    const privateState = (await providers.privateStateProvider.get(
+      PRIVATE_STATE_ID,
+    )) as MailProofPrivateState | null;
+    if (!privateState) {
+      console.error('\n❌ No private state found. Run: npm run setup\n');
+      process.exit(1);
+    }
 
     console.log('  ✅ Connected!\n');
 
@@ -170,8 +167,8 @@ async function main() {
     let running = true;
     while (running) {
       console.log('─── Menu ───────────────────────────────────────────────────────');
-      console.log('  1. Register a demo claim');
-      console.log('  2. Read approved claim count');
+      console.log('  1. Redeem a locally-signed demo claim');
+      console.log('  2. Read contract state');
       console.log('  3. Check wallet balance');
       console.log('  4. Exit\n');
 
@@ -179,25 +176,46 @@ async function main() {
 
       switch (choice.trim()) {
         case '1': {
+          // Not an email proof. A claim signed here with the attestor key,
+          // to exercise the on-chain path before the attestor exists.
+          const uniqueClaimId =
+            (await rl.question('  Unique claim id [CLAIM-DEMO-0001]: ')).trim() ||
+            'CLAIM-DEMO-0001';
+          const { claim, signature } = buildDemoSignedClaim({
+            config: mailproofConfig,
+            subjectSecret: privateState.subjectSecret,
+            network,
+            uniqueClaimId,
+          });
+
           console.log('\n  Submitting transaction (this may take 30-60 seconds)...');
           try {
-            const tx = await deployed.callTx.registerDemoClaim();
-            console.log('\n  ✅ Demo claim registered.');
+            const tx = await deployed.callTx.redeemClaim(claim, signature);
+            console.log('\n  ✅ Claim redeemed.');
             console.log(`  Transaction ID: ${tx.public.txId}`);
             console.log(`  Block height: ${tx.public.blockHeight}\n`);
           } catch (error) {
-            console.error('\n  ❌ Failed:', error instanceof Error ? error.message : error);
+            const message = error instanceof Error ? error.message : String(error);
+            console.error('\n  ❌ Rejected:', message.split('\n')[0]);
+            if (message.includes('claim already used')) {
+              console.error('     That evidence was already redeemed in this campaign.\n');
+            } else {
+              console.error('');
+            }
           }
           break;
         }
 
         case '2': {
-          console.log('\n  Reading claim count from blockchain...');
+          console.log('\n  Reading contract state from blockchain...');
           try {
             const contractState = await providers.publicDataProvider.queryContractState(deployment.address);
             if (contractState) {
               const ledgerState = MailProof.ledger(contractState.data);
-              console.log(`\n  📋 Approved claims: ${ledgerState.approvedClaimCount}\n`);
+              console.log(`\n  📋 Campaign:        ${mailproofConfig.campaign}`);
+              console.log(`     Claim type:      ${mailproofConfig.claimTypeName}`);
+              console.log(`     Approved claims: ${ledgerState.approvedClaimCount}`);
+              console.log(`     Nullifiers used: ${ledgerState.usedNullifiers.size()}\n`);
             } else {
               console.log('\n  📋 No state found (contract state empty)\n');
             }

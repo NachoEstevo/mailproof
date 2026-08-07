@@ -11,6 +11,11 @@
 .midnight-wallet-state/
 deployment.json
 
+# Private-state store written by levelPrivateStateProvider. Holds the
+# subject secret, which is the whole point of the subject binding.
+midnight-level-db/
+*-level-db/
+
 # Private email fixtures — never commit a real .eml.
 # Synthetic demo fixtures under fixtures/emails/ are allowed (see §75).
 fixtures/private-emails/

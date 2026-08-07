@@ -14,13 +14,14 @@ import { randomBytes } from 'node:crypto';
 import { ecAdd, ecMul, ecMulGenerator, type JubjubPoint } from '@midnight-ntwrk/compact-runtime';
 
 import {
+  DOMAIN_ATTESTOR_KEY,
   DOMAIN_CHALLENGE,
   DOMAIN_NONCE_HI,
   DOMAIN_NONCE_LO,
   JUBJUB_ORDER,
   SCALAR_LIMB_SHIFT,
 } from './constants.js';
-import { hashBytes32Vector, hashPoint, pad32 } from './hashes.js';
+import { hashBytes, hashBytes32Vector, hashPoint, pad32 } from './hashes.js';
 
 /** Bytes of the challenge digest folded into the scalar (§ see contract). */
 const CHALLENGE_BYTES = 28;
@@ -80,27 +81,28 @@ export function generateSecretKey(): bigint {
 }
 
 /**
- * Deterministically derive a secret key from seed material.
+ * Deterministically derive a secret key from seed material of any length.
  *
- * Used to load the attestor key from an environment variable and to make test
- * fixtures reproducible. Wide-reduced, so the result is unbiased regardless of
- * the seed's length.
+ * Used to load the attestor key from the environment and to make test
+ * fixtures reproducible. The seed is compressed to 32 bytes first, so a long
+ * passphrase and a raw 32-byte key go through the same path, then
+ * wide-reduced so the result is unbiased.
+ *
+ * Note this treats its input as *seed material*, not as a literal scalar:
+ * 32 random bytes exceed the curve order about 94% of the time, so
+ * interpreting them directly would reject most keys.
  */
 export function secretKeyFromSeed(seed: Uint8Array): bigint {
-  const hi = hashBytes32Vector([pad32(DOMAIN_NONCE_HI), padToBytes32(seed)]);
-  const lo = hashBytes32Vector([pad32(DOMAIN_NONCE_LO), padToBytes32(seed)]);
+  const material = hashBytes(DOMAIN_ATTESTOR_KEY, seed);
+  const hi = hashBytes32Vector([pad32(DOMAIN_NONCE_HI), material]);
+  const lo = hashBytes32Vector([pad32(DOMAIN_NONCE_LO), material]);
   const x = wideReduce(hi, lo);
   return x === 0n ? 1n : x;
 }
 
-function padToBytes32(seed: Uint8Array): Uint8Array {
-  if (seed.length === 32) return seed;
-  if (seed.length > 32) {
-    throw new Error(`secretKeyFromSeed: seed must be at most 32 bytes, got ${seed.length}`);
-  }
-  const out = new Uint8Array(32);
-  out.set(seed, 0);
-  return out;
+/** {@link secretKeyFromSeed} over the UTF-8 encoding of a passphrase. */
+export function secretKeyFromPassphrase(passphrase: string): bigint {
+  return secretKeyFromSeed(new TextEncoder().encode(passphrase));
 }
 
 export function publicKeyFromSecret(secretKey: bigint): JubjubPoint {

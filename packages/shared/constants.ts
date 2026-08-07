@@ -16,7 +16,8 @@ export const DOMAIN_ISSUER = 'MAILPROOF:ISSUER:V1';
 export const DOMAIN_CAMPAIGN = 'MAILPROOF:CAMPAIGN:V1';
 export const DOMAIN_PROOF_DIGEST = 'MAILPROOF:PROOF-DIGEST:V1';
 
-/** Nonce derivation is signer-local; the contract never sees these. */
+/** Key and nonce derivation are signer-local; the contract never sees these. */
+export const DOMAIN_ATTESTOR_KEY = 'MAILPROOF:ATTESTOR-KEY:V1';
 export const DOMAIN_NONCE_HI = 'MAILPROOF:NONCE-HI:V1';
 export const DOMAIN_NONCE_LO = 'MAILPROOF:NONCE-LO:V1';
 

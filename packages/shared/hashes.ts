@@ -58,15 +58,13 @@ export function hashPoint(point: JubjubPoint): Uint8Array {
 }
 
 /**
- * Domain-separated hash of an arbitrary-length string into 32 bytes.
+ * Domain-separated hash of arbitrary-length bytes into 32 bytes.
  *
- * Used off-circuit only, to turn identifiers like a blueprint slug or a
- * campaign name into the fixed-width values the contract stores. The string
- * is hashed in 32-byte chunks so inputs longer than 32 bytes still work,
- * unlike `pad32`.
+ * Used off-circuit only, to turn variable-length inputs — a blueprint slug, a
+ * campaign name, seed material — into the fixed-width values the contract and
+ * the signer need. Unlike `pad32`, there is no length ceiling.
  */
-export function hashString(domain: string, value: string): Uint8Array {
-  const bytes = new TextEncoder().encode(value);
+export function hashBytes(domain: string, bytes: Uint8Array): Uint8Array {
   const chunkCount = Math.max(1, Math.ceil(bytes.length / 32));
   const chunks: Uint8Array[] = [];
   for (let i = 0; i < chunkCount; i++) {
@@ -76,6 +74,11 @@ export function hashString(domain: string, value: string): Uint8Array {
   }
   // Length is bound in so that "ab"+"" and "a"+"b" cannot collide.
   return hashBytes32Vector([pad32(domain), fieldToBytes32(BigInt(bytes.length)), ...chunks]);
+}
+
+/** {@link hashBytes} over the UTF-8 encoding of `value`. */
+export function hashString(domain: string, value: string): Uint8Array {
+  return hashBytes(domain, new TextEncoder().encode(value));
 }
 
 /** `upgradeFromTransient` — widens a field element to 32 bytes. */

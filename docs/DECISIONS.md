@@ -143,6 +143,44 @@ not of the scheme.
 
 ---
 
+## D-006 — Pin `onchain-runtime-v3` to 3.0.0 with an npm override
+
+**Date:** 2026-08-07
+**Status:** accepted
+
+### Context
+
+`redeemClaim` failed on chain with `expected instance of StateValue`, thrown
+from an `instanceof` check inside the transaction builder — while deployment
+worked. Two copies of `@midnight-ntwrk/onchain-runtime-v3` were installed:
+3.1.0 hoisted for `compact-runtime@0.16.0` (which asks for `^3.0.0`) and 3.0.0
+nested for `midnight-js-protocol@4.1.1` (which pins it exactly).
+
+The package exposes WASM-backed classes. Two copies means two class
+identities, so an object built by one is not recognised by the other.
+
+Both packages are at the versions the compatibility matrix specifies. The
+conflict is created by npm's resolution of the caret range, not by either
+package being wrong.
+
+### Decision
+
+```json
+"overrides": { "@midnight-ntwrk/onchain-runtime-v3": "3.0.0" }
+```
+
+followed by `npm dedupe`. 3.0.0 satisfies both `^3.0.0` and the exact pin, so
+this narrows resolution rather than forcing anything out of range.
+
+### Consequence
+
+Anyone regenerating `package-lock.json` must keep the override, or this
+returns as a confusing runtime error far from its cause. Note that
+`npm install` alone left two same-version copies; `npm dedupe` was needed to
+collapse them.
+
+---
+
 ## D-005 — Subject binding from private state, not from a wallet address
 
 **Date:** 2026-08-07

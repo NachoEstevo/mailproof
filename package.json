@@ -19,7 +19,23 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "tsx scripts/e2e-check.ts",
+    "e2e:claim": "tsx scripts/e2e-claim.ts",
+    "eml:inspect": "tsx scripts/inspect-eml.ts",
     "verify": "npm run typecheck && npm run test"
+  },
+  "comments": {
+    "overrides": [
+      "onchain-runtime-v3 exposes WASM classes (StateValue, ChargedState).",
+      "Two copies in the tree means two class identities, and passing an",
+      "object from one to the other fails an instanceof check deep inside the",
+      "transaction builder ('expected instance of StateValue').",
+      "compact-runtime@0.16.0 asks for ^3.0.0 and npm resolved it to 3.1.0,",
+      "while midnight-js-protocol@4.1.1 pins exactly 3.0.0 and got a nested",
+      "copy. 3.0.0 satisfies both, so pinning it collapses them into one."
+    ]
+  },
+  "overrides": {
+    "@midnight-ntwrk/onchain-runtime-v3": "3.0.0"
   },
   "dependencies": {
     "@midnight-ntwrk/compact-runtime": "0.16.0",

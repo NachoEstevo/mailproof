@@ -20,7 +20,7 @@ import { CLAIM_TYPE, CLAIM_VERSION } from '../../packages/shared/constants.js';
 import { pad32 } from '../../packages/shared/hashes.js';
 import {
   publicKeyFromSecret,
-  secretKeyFromSeed,
+  secretKeyFromPassphrase,
   sign,
   type SchnorrSignature,
 } from '../../packages/shared/schnorr.js';
@@ -38,11 +38,11 @@ export const CAMPAIGN_ID = campaignIdHash(DEMO.campaign);
 export const OTHER_CAMPAIGN_ID = campaignIdHash('other-campaign-2026');
 
 /** Test-only attestor key. Never used outside the suite. */
-export const ATTESTOR_SECRET_KEY = secretKeyFromSeed(pad32('mailproof-test-attestor'));
+export const ATTESTOR_SECRET_KEY = secretKeyFromPassphrase('mailproof-test-attestor');
 export const ATTESTOR_PUBLIC_KEY = publicKeyFromSecret(ATTESTOR_SECRET_KEY);
 
 /** An unauthorised signer, for the wrong-key cases. */
-export const ROGUE_SECRET_KEY = secretKeyFromSeed(pad32('mailproof-test-rogue'));
+export const ROGUE_SECRET_KEY = secretKeyFromPassphrase('mailproof-test-rogue');
 export const ROGUE_PUBLIC_KEY = publicKeyFromSecret(ROGUE_SECRET_KEY);
 
 export const SUBJECT_SECRET = pad32('mailproof-test-subject-secret');

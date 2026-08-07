@@ -4,11 +4,8 @@
  * Non-interactive: scaffold → npm run setup runs straight through.
  * No readline prompts, no .midnight-seed file.
  */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { resolveNetwork, getOrCreateWallet, formatWalletBackupNotice, recordDeployment } from './network';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
-import { fileURLToPath, pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import * as Rx from 'rxjs';
 
@@ -18,14 +15,20 @@ import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
 
 // @ts-expect-error Required for wallet sync
 globalThis.WebSocket = WebSocket;
 
-// Identifier under which this contract's private state is stored. The
-// Gate 1 contract has no witnesses, so its private state is empty ({}).
-const PRIVATE_STATE_ID = 'mailproofPrivateState';
+import {
+  constructorArgs,
+  describeConfig,
+  loadCompiledContract,
+  loadConfig,
+  newPrivateState,
+  PRIVATE_STATE_ID,
+  PRIVATE_STATE_STORE,
+  zkConfigPath,
+} from './contract';
 
 // ─── Network configuration ─────────────────────────────────────────────────────
 //
@@ -70,21 +73,8 @@ async function waitForProofServer(maxAttempts = 60, delayMs = 2000): Promise<boo
 
 // ─── Compiled contract loading ─────────────────────────────────────────────────
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'mailproof');
-const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
-
-if (!fs.existsSync(contractPath)) {
-  console.error('\n❌ Contract not compiled! Run: npm run compile\n');
-  process.exit(1);
-}
-
-const MailProof = await import(pathToFileURL(contractPath).href);
-
-const compiledContract = CompiledContract.make('mailproof', MailProof.Contract).pipe(
-  CompiledContract.withVacantWitnesses,
-  CompiledContract.withCompiledFileAssets(zkConfigPath),
-);
+const { compiled: compiledContract } = await loadCompiledContract();
+const mailproofConfig = loadConfig();
 
 // ─── Providers ─────────────────────────────────────────────────────────────────
 
@@ -117,7 +107,7 @@ async function createProviders(walletCtx: WalletContext) {
 
   return {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'mailproof-state',
+      privateStateStoreName: PRIVATE_STATE_STORE,
       accountId,
       privateStoragePasswordProvider: () => privateStatePassword,
     }),
@@ -266,6 +256,14 @@ async function main() {
   console.log('  Setting up providers...');
   const providers = await createProviders(walletCtx);
 
+  // A fresh subject secret per deployment. It stays in the local private
+  // state store; the chain only ever sees a campaign-scoped hash of it.
+  const initialPrivateState = newPrivateState();
+
+  console.log('\n  This deployment will be permanently pinned to:');
+  console.log(describeConfig(mailproofConfig));
+  console.log('');
+
   // The wallet's reported DUST balance is a *time-projection* of what its
   // registered NIGHT will eventually generate; the tx-builder spends only
   // what the next block's timestamp accounts for, which lags wall-clock by
@@ -289,16 +287,14 @@ async function main() {
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
       // Midnight.js 4.1.x supplies private state via privateStateId +
-      // initialPrivateState (empty here — the Gate 1 contract has no
-      // witnesses). args is the contract constructor's arguments: empty for
-      // MailProof's no-arg constructor. (Statically-typed contracts can omit
-      // args entirely; this script loads the contract dynamically, so the
-      // conditional args type widens to any[] and an explicit [] is required.)
+      // initialPrivateState. `args` is the contract constructor's arguments,
+      // in declaration order — see constructorArgs. (This script loads the
+      // contract dynamically, so the conditional arg types widen to any[].)
       deployed = await deployContract(providers, {
         compiledContract: compiledContract as any,
-        args: [],
+        args: [...constructorArgs(mailproofConfig, network)] as any,
         privateStateId: PRIVATE_STATE_ID,
-        initialPrivateState: {},
+        initialPrivateState: initialPrivateState as any,
       });
       break;
     } catch (err: any) {

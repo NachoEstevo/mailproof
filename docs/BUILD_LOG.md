@@ -131,11 +131,84 @@ the actual thrown message, not merely that it threw.
 ### Not yet done
 
 - C-10 (paused) and C-11 (rotated attestor) — P1, need a safe admin path.
-- Deploy to local devnet and run a real proof (`npm run setup`).
-- Gates 3–8: email fixture, blueprint, ZK Email proof, attestor service, CLI
-  end-to-end, frontend.
+
+---
+
+## Gate 2b — Redemption on a real chain
+
+- Goal: prove the circuit *proves*, not just that its logic is right.
+- Result: **pass**.
+
+The contract unit tests run circuits in-process. They cannot catch problems in
+proof generation, transaction balancing, submission or indexing, so this stage
+runs the whole stack on a local devnet.
+
+Commands:
+
+```bash
+npm run setup       # docker compose up, compile, deploy
+npm run e2e:claim   # redeem a locally-signed claim, then try to replay it
+```
+
+### Problems hit and how they were resolved
+
+**Port 6300 already allocated.** Another Midnight project on this machine was
+already running a proof server on the compose-mapped port, so `docker compose
+up` aborted the whole bring-up. `setup.ts` now probes the configured proof
+server first and reuses a running one instead of starting a second. The proof
+server is stateless, so sharing is safe; `MIDNIGHT_PROOF_SERVER_URL` overrides
+if a dedicated one is wanted.
+
+**`pad32: "..." is 36 bytes, max 32`.** The built-in devnet attestor seed was
+longer than the padding helper allowed — and so would be any passphrase over
+32 characters. Seed material is now hashed rather than padded, so length is
+irrelevant. Regression covered in `config/mailproof.test.ts`.
+
+**`expected instance of StateValue`.** The real one. `redeemClaim` failed deep
+inside the transaction builder while the deploy had worked fine. Cause: two
+copies of `@midnight-ntwrk/onchain-runtime-v3` in the tree —
+`compact-runtime@0.16.0` asks for `^3.0.0` and npm resolved 3.1.0, while
+`midnight-js-protocol@4.1.1` pins exactly `3.0.0` and got a nested copy. The
+package exposes WASM classes, so two copies means two class identities and an
+`instanceof` check across the boundary fails. 3.0.0 satisfies both
+constraints, so `overrides` pins it and `npm dedupe` collapses the tree to one
+copy. Both versions were matrix-correct on their own; the conflict only exists
+in combination.
+
+### Results
+
+```text
+[1/6] Connected to 3c1a03ec7919…  (approved: 0)
+[2/6] Claim built and signed locally  (id: CLAIM-E2E-MSJ8IEL1)
+[3/6] Transaction proved and submitted in 27.7s  (block 104)
+[4/6] Claim approved on chain  (approved: 1)
+[5/6] Replay rejected: "claim already used"
+[6/6] State unchanged after the rejected replay
+```
+
+Then three consecutive runs, as §33.4 requires:
+
+| Run | Prove + submit | Counter | Replay |
+|---|---|---|---|
+| 1 | 23.8s | 1 → 2 | rejected |
+| 2 | 21.2s | 2 → 3 | rejected |
+| 3 | 21.4s | 3 → 4 | rejected |
+
+3/3, no manual intervention. Budget for **~21–28s** per redemption; the very
+first run additionally spends ~8s downloading public parameters for k=16, once
+per machine.
+
+Contract address (devnet, ephemeral): `3c1a03ec7919…`
+
+### Privacy note
+
+The pre-commit review (§74) caught `midnight-level-db/` staged for commit —
+the `levelPrivateStateProvider` store, which holds the subject secret. Now
+gitignored.
 
 ### Next action
 
-Deploy to local devnet and confirm `redeemClaim` proves and lands on chain —
-the simulator exercises circuit logic, not proof generation.
+Gates 3–5 need a real DKIM-signed `.eml` and a blueprint compiled on
+registry.zk.email. Neither can be produced from here. Work that does not
+depend on them — the `.eml` inspector, the attestor service — continues
+meanwhile.

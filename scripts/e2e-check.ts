@@ -4,9 +4,8 @@
  * Reconnects to the deployed contract, reads its ledger state, and exits 0
  * on success. Used by `npm run test:e2e` and by the project's CI workflows.
  */
-import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
 
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
@@ -16,13 +15,15 @@ import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-pri
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { resolveNetwork, getOrCreateWallet, formatWalletBackupNotice, getDeployment } from '../src/network';
 import { createWallet, persistWalletState } from '../src/wallet';
-import { CompiledContract } from '@midnight-ntwrk/midnight-js-protocol/compact-js';
+import {
+  loadCompiledContract,
+  newPrivateState,
+  PRIVATE_STATE_ID,
+  PRIVATE_STATE_STORE,
+} from '../src/contract';
 
 // @ts-expect-error wallet sync requires WebSocket
 globalThis.WebSocket = WebSocket;
-
-// Must match the privateStateId used at deploy time (witness-free → empty state).
-const PRIVATE_STATE_ID = 'mailproofPrivateState';
 
 // ─── Network configuration ─────────────────────────────────────────────────────
 
@@ -55,14 +56,10 @@ async function main() {
   }
 
   // 2. Build wallet and providers
-  const __dirname = path.dirname(fileURLToPath(import.meta.url));
-  const zkConfigPath = path.resolve(__dirname, '..', 'contracts', 'managed', 'mailproof');
-  const contractPath = path.join(zkConfigPath, 'contract', 'index.js');
-  if (!fs.existsSync(contractPath)) fail('Compiled contract missing — run `npm run compile`.');
-  const MailProof = await import(pathToFileURL(contractPath).href);
-  const compiledContract = CompiledContract.make('mailproof', MailProof.Contract).pipe(
-    CompiledContract.withVacantWitnesses,
-    CompiledContract.withCompiledFileAssets(zkConfigPath),
+  const { compiled: compiledContract } = await loadCompiledContract();
+  const zkConfigPath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..', 'contracts', 'managed', 'mailproof',
   );
 
   const walletCtx = await createWallet({ network, networkConfig, seed: SEED });
@@ -86,7 +83,7 @@ async function main() {
 
   const providers = {
     privateStateProvider: levelPrivateStateProvider({
-      privateStateStoreName: 'mailproof-state',
+      privateStateStoreName: PRIVATE_STATE_STORE,
       accountId: walletCtx.unshieldedKeystore.getBech32Address().toString(),
       // SDK requires ≥16 chars. e2e-check is read-only so we don't expose
       // the env-var override here — match the deploy script's local-devnet default.
@@ -105,7 +102,7 @@ async function main() {
       contractAddress: deployment.address,
       compiledContract: compiledContract as any,
       privateStateId: PRIVATE_STATE_ID,
-      initialPrivateState: {},
+      initialPrivateState: newPrivateState() as any,
     });
   } catch (err: any) {
     await walletCtx.wallet.stop();
