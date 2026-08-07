@@ -9,6 +9,8 @@
  *  - A rejected replay is a result, not a crash. That rejection is the point.
  */
 
+import { connectWallet, discoverWallets, handleWalletRequest } from '/wallet.js';
+
 const $ = (id) => document.getElementById(id);
 
 const els = {
@@ -25,6 +27,9 @@ const els = {
   replay: $('replay'),
   result: $('result'),
   onchain: $('onchain'),
+  wallet: $('wallet'),
+  walletStatus: $('wallet-status'),
+  walletConnect: $('wallet-connect'),
 };
 
 let state = null;
@@ -37,6 +42,11 @@ let currentEml = null;
 // re-enable the button, start a second stream over the first one's display,
 // and race two submissions — so evidence input is frozen while one runs.
 let redeeming = false;
+
+// The connected DApp Connector wallet, or null for the server's devnet
+// wallet. Connecting is optional: the demo runs either way, and the UI says
+// which one paid.
+let wallet = null;
 
 // ── Chain state ────────────────────────────────────────────────────────────
 
@@ -89,6 +99,63 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
   );
+}
+
+// ── Wallet ─────────────────────────────────────────────────────────────────
+
+/**
+ * Render the wallet panel.
+ *
+ * Wallet names come from browser extensions, so they are written with
+ * `textContent` rather than into `innerHTML`.
+ */
+function renderWallet(message, kind) {
+  const available = discoverWallets();
+  els.walletStatus.textContent = '';
+  els.walletStatus.className = `wallet-status${kind ? ` ${kind}` : ''}`;
+
+  if (wallet) {
+    els.walletStatus.textContent = `${wallet.name} · ${shorten(wallet.shieldedAddress)}`;
+    els.walletConnect.textContent = 'Disconnect';
+    els.walletConnect.hidden = false;
+  } else if (available.length === 0) {
+    els.walletStatus.textContent =
+      message ?? 'No Midnight wallet detected — this demo will pay from its own devnet wallet.';
+    els.walletConnect.hidden = true;
+  } else {
+    els.walletStatus.textContent = message ?? `${available.length} wallet(s) available`;
+    els.walletConnect.textContent = 'Connect wallet';
+    els.walletConnect.hidden = false;
+  }
+}
+
+function shorten(value) {
+  return value.length > 22 ? `${value.slice(0, 12)}…${value.slice(-6)}` : value;
+}
+
+async function toggleWallet() {
+  if (redeeming) return;
+  if (wallet) {
+    wallet = null;
+    renderWallet('Disconnected — the demo will pay from its own devnet wallet.');
+    return;
+  }
+
+  const available = discoverWallets();
+  if (available.length === 0) return;
+
+  els.walletConnect.disabled = true;
+  try {
+    // One wallet is the overwhelmingly common case; with several, the first
+    // by name is taken rather than adding a picker to a demo screen.
+    wallet = await connectWallet(available[0].uuid, state?.walletNetworkId ?? 'undeployed');
+    renderWallet(null, 'ok');
+  } catch (error) {
+    wallet = null;
+    renderWallet(error?.message ?? 'could not connect', 'bad');
+  } finally {
+    els.walletConnect.disabled = false;
+  }
 }
 
 // ── Email inspection ───────────────────────────────────────────────────────
@@ -190,7 +257,10 @@ async function readSse(response, handlers) {
         if (line.startsWith('event: ')) event = line.slice(7).trim();
         else if (line.startsWith('data: ')) data += line.slice(6);
       }
-      if (data && handlers[event]) handlers[event](JSON.parse(data));
+      // Awaited: the server sends nothing more until a wallet-request is
+      // answered, and awaiting also stops the stream ending before `done` has
+      // finished painting its result.
+      if (data && handlers[event]) await handlers[event](JSON.parse(data));
     }
   }
 }
@@ -232,10 +302,20 @@ async function redeem() {
     await refreshState();
   };
 
+  // Identifies this redemption's wallet channel; the server routes its
+  // balance and submit calls back over the same stream.
+  const session = crypto.randomUUID();
+  const headers = { 'content-type': 'text/plain' };
+  if (wallet) {
+    headers['x-mailproof-wallet-session'] = session;
+    headers['x-mailproof-wallet-coin-key'] = wallet.coinPublicKey;
+    headers['x-mailproof-wallet-enc-key'] = wallet.encryptionPublicKey;
+  }
+
   try {
     const response = await fetch('/api/redeem', {
       method: 'POST',
-      headers: { 'content-type': 'text/plain' },
+      headers,
       body: currentEml,
     });
     if (!response.ok || !response.body) throw new Error(`server returned ${response.status}`);
@@ -243,6 +323,18 @@ async function redeem() {
       stage: (data) => {
         setStage(data.id, data.state === 'done' ? 'done' : 'running', data.detail ?? data.note ?? '');
         if (data.nullifier) nullifier = data.nullifier;
+      },
+      'wallet-request': async (request) => {
+        const answer = wallet
+          ? await handleWalletRequest(wallet, request)
+          : { id: request.id, error: 'no wallet is connected' };
+        await fetch('/api/wallet-response', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ session, ...answer }),
+        }).catch(() => {
+          /* The server times the request out and reports it. */
+        });
       },
       done: finishOk,
       failed: finishFailed,
@@ -315,6 +407,12 @@ els.loadDemoEmail.addEventListener('click', async (e) => {
 
 els.redeem.addEventListener('click', redeem);
 els.replay.addEventListener('click', redeem);
+els.walletConnect.addEventListener('click', toggleWallet);
+
+// Extensions inject `window.midnight` on their own schedule, so the panel is
+// drawn once now and again shortly after load rather than only at startup.
+renderWallet();
+setTimeout(renderWallet, 1000);
 
 // Bare call at module scope: an unhandled rejection here would leave the page
 // on "connecting…" with no explanation, so refreshState swallows its own.

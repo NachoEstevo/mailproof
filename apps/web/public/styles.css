@@ -142,6 +142,24 @@ main {
 /* Frozen while a redemption is in flight — swapping the evidence mid-run
    would race two on-chain submissions. */
 .dropzone.busy { opacity: 0.45; pointer-events: none; }
+
+.wallet {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.wallet-status {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+.wallet-status.ok  { color: var(--ok); }
+.wallet-status.bad { color: var(--bad); }
 .drop-title { margin: 0 0 4px; font-size: 16px; }
 .drop-sub   { margin: 0 0 14px; color: var(--ink-dim); font-size: 13px; font-family: var(--mono); }
 

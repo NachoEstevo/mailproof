@@ -29,8 +29,19 @@ import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-p
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 
+import { Transaction } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import type { MidnightProvider, WalletProvider } from '@midnight-ntwrk/midnight-js-types';
+
 import { getDeployment, getOrCreateWallet, resolveNetwork } from '../../src/network.js';
 import { createWallet, persistWalletState, type WalletContext } from '../../src/wallet.js';
+import {
+  browserWalletProviders,
+  decodeWalletKeys,
+  DelegatingWalletProvider,
+  Mutex,
+  WalletBridge,
+  type WalletResponse,
+} from './wallet-bridge.js';
 import {
   loadCompiledContract,
   loadConfig,
@@ -69,6 +80,9 @@ const config = loadConfig();
  */
 const DKIM_DIRECT_OUTPUTS = 'dkim-direct/v1';
 
+/** Writes one Server-Sent Events frame. */
+type Emit = (event: string, data: unknown) => void;
+
 /** The demo email is private (§61.3): gitignored, served only on localhost. */
 const PRIVATE_DEMO_EML = path.resolve(here, '../../fixtures/private-emails/flight-edu.eml');
 
@@ -98,8 +112,9 @@ function dkimDirectEntry(): BlueprintEntry | undefined {
   return entry?.dkim && entry.status === 'pinned' ? entry : undefined;
 }
 
-async function createProviders(walletCtx: WalletContext) {
-  const walletProvider = {
+/** The devnet wallet this process holds — the fallback when none is connected. */
+function serverWalletProvider(walletCtx: WalletContext): WalletProvider & MidnightProvider {
+  return {
     getCoinPublicKey: () => walletCtx.shieldedSecretKeys.coinPublicKey,
     getEncryptionPublicKey: () => walletCtx.shieldedSecretKeys.encryptionPublicKey,
     async balanceTx(tx: any, ttl?: Date) {
@@ -112,6 +127,9 @@ async function createProviders(walletCtx: WalletContext) {
     },
     submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
   };
+}
+
+async function createProviders(walletCtx: WalletContext, walletProvider: DelegatingWalletProvider) {
   const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
   return {
     privateStateProvider: levelPrivateStateProvider({
@@ -145,7 +163,8 @@ async function main(): Promise<void> {
   await walletCtx.wallet.waitForSyncedState();
   await persistWalletState(network, walletCtx);
 
-  const providers = await createProviders(walletCtx);
+  const walletProvider = new DelegatingWalletProvider(serverWalletProvider(walletCtx));
+  const providers = await createProviders(walletCtx, walletProvider);
   const deployed: any = await findDeployedContract(providers, {
     compiledContract: compiled as any,
     contractAddress: deployment.address,
@@ -167,11 +186,16 @@ async function main(): Promise<void> {
 
   const app = Fastify({ logger: false, bodyLimit: 10_000_000 });
 
+  const redemptions = new Mutex();
+  /** Bridges awaiting browser answers, keyed by the redemption's session id. */
+  const bridges = new Map<string, WalletBridge>();
+
   const sendFile = (name: string, type: string) => async (_req: any, reply: any) => {
     reply.type(type).send(readFileSync(path.join(PUBLIC_DIR, name), 'utf8'));
   };
   app.get('/', sendFile('index.html', 'text/html; charset=utf-8'));
   app.get('/app.js', sendFile('app.js', 'text/javascript; charset=utf-8'));
+  app.get('/wallet.js', sendFile('wallet.js', 'text/javascript; charset=utf-8'));
   app.get('/styles.css', sendFile('styles.css', 'text/css; charset=utf-8'));
 
   /** The synthetic sample, so a demo never depends on having a file to hand. */
@@ -205,6 +229,10 @@ async function main(): Promise<void> {
         if (!entry.dkim) return 'zk-email';
         return entry.status === 'pinned' ? 'dkim-direct' : 'dkim-direct (pending)';
       })(),
+      // The id a wallet must be connected to. `connect()` takes this hint and
+      // the browser refuses a wallet reporting anything else.
+      walletNetworkId: network,
+      walletSimulator: process.env.MAILPROOF_WALLET_SIMULATOR === '1',
       redeemableFromBrowser: Boolean(dkimDirectEntry()),
       demoEmailAvailable: existsSync(PRIVATE_DEMO_EML),
       approvedClaimCount: ledger ? Number(ledger.approvedClaimCount) : 0,
@@ -274,9 +302,74 @@ async function main(): Promise<void> {
   });
 
   /**
+   * A stand-in for a connector wallet, for exercising the bridge without one.
+   *
+   * Midnight Lace cannot join a local `undeployed` devnet, which would leave
+   * the whole browser-wallet path untested until a public deployment. This
+   * endpoint performs the two operations a wallet would — balance and submit
+   * — using this process's devnet wallet, so the bridge itself (framing,
+   * correlation, hex round-trip, deserialisation) runs for real against the
+   * chain.
+   *
+   * It is NOT a wallet: the keys are the server's, not a user's. Opt-in only,
+   * and the UI labels any run that uses it, in the same spirit as the
+   * attestor's fixture verifier (§50.4).
+   */
+  if (process.env.MAILPROOF_WALLET_SIMULATOR === '1') {
+    const simulated = serverWalletProvider(walletCtx);
+    console.warn(
+      '\n  ⚠ WALLET SIMULATOR ENABLED — /api/wallet-simulator balances and\n' +
+        '    submits with the server devnet wallet. It is not a user wallet.\n',
+    );
+
+    app.post('/api/wallet-simulator', async (request, reply) => {
+      const { method, tx } = request.body as { method?: string; tx?: string };
+      if (typeof tx !== 'string') {
+        return reply.status(400).send({ error: 'missing tx' });
+      }
+      const bytes = Uint8Array.from(Buffer.from(tx, 'hex'));
+      try {
+        if (method === 'balanceUnsealedTransaction') {
+          const unbound = Transaction.deserialize('signature', 'proof', 'pre-binding', bytes);
+          const balanced = await simulated.balanceTx(unbound as never);
+          return { tx: Buffer.from(balanced.serialize()).toString('hex') };
+        }
+        if (method === 'submitTransaction') {
+          const sealed = Transaction.deserialize('signature', 'proof', 'binding', bytes);
+          await simulated.submitTx(sealed as never);
+          return { tx };
+        }
+        return reply.status(400).send({ error: `unsupported method "${method}"` });
+      } catch (error) {
+        return reply
+          .status(500)
+          .send({ error: error instanceof Error ? error.message : 'simulator failed' });
+      }
+    });
+  }
+
+  /**
+   * Answers a `wallet-request` frame. Posted by the browser once its wallet
+   * has balanced or submitted the transaction the server asked about.
+   */
+  app.post('/api/wallet-response', async (request, reply) => {
+    const body = request.body as { session?: unknown } & WalletResponse;
+    const bridge = typeof body?.session === 'string' ? bridges.get(body.session) : undefined;
+    if (!bridge) return reply.status(404).send({ ok: false, error: 'no such wallet session' });
+    if (typeof body.id !== 'number') {
+      return reply.status(400).send({ ok: false, error: 'missing request id' });
+    }
+    return { ok: bridge.settle(body) };
+  });
+
+  /**
    * Runs the pipeline over the submitted `.eml`, streaming each stage so the
    * UI is never a bare spinner. POST because the message rides in the body —
    * the client reads the SSE stream off `fetch` rather than EventSource.
+   *
+   * When the browser has a wallet connected it sends the session headers
+   * below, and balancing plus submission are routed to it instead of to the
+   * devnet wallet this process holds.
    */
   app.post('/api/redeem', async (request, reply) => {
     reply.raw.writeHead(200, {
@@ -284,12 +377,55 @@ async function main(): Promise<void> {
       'cache-control': 'no-cache',
       connection: 'keep-alive',
     });
-    const emit = (event: string, data: unknown) => {
+    const emit: Emit = (event, data) => {
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
     };
 
+    const raw = typeof request.body === 'string' ? request.body : '';
+    const session = readWalletSession(request.headers as Record<string, string | undefined>);
+
+    // Serialised: a redemption mutates private state, consumes a nullifier,
+    // and borrows the shared wallet provider.
+    await redemptions.run(() => redeem(raw, session, emit));
+    reply.raw.end();
+  });
+
+  /** Wallet details a browser sends when it wants its own wallet to pay. */
+  interface WalletSession {
+    readonly id: string;
+    readonly coinPublicKey: string;
+    readonly encryptionPublicKey: string;
+  }
+
+  function readWalletSession(
+    headers: Record<string, string | undefined>,
+  ): WalletSession | undefined {
+    const id = headers['x-mailproof-wallet-session'];
+    const coinPublicKey = headers['x-mailproof-wallet-coin-key'];
+    const encryptionPublicKey = headers['x-mailproof-wallet-enc-key'];
+    return id && coinPublicKey && encryptionPublicKey
+      ? { id, coinPublicKey, encryptionPublicKey }
+      : undefined;
+  }
+
+  /**
+   * The pipeline: verify the signature, get the claim attested, redeem it on
+   * chain. Never throws — every outcome leaves through an SSE frame, because
+   * a rejected replay is a result the demo wants to show, not a crash.
+   */
+  async function redeem(raw: string, session: WalletSession | undefined, emit: Emit): Promise<void> {
+    let releaseWallet: (() => void) | undefined;
+    let bridge: WalletBridge | undefined;
+
     try {
-      const raw = typeof request.body === 'string' ? request.body : '';
+      if (session) {
+        bridge = new WalletBridge((walletRequest) => emit('wallet-request', walletRequest));
+        bridges.set(session.id, bridge);
+        releaseWallet = walletProvider.use(
+          browserWalletProviders(bridge, decodeWalletKeys(network, session)),
+        );
+      }
+
       if (raw.trim().length === 0) {
         throw new Error('Drop the email first — there is nothing to verify.');
       }
@@ -366,14 +502,20 @@ async function main(): Promise<void> {
         nullifier: toHex(attestation.claim.claimNullifier),
       });
 
-      emit('stage', { id: 'submit', state: 'running' });
+      emit('stage', {
+        id: 'submit',
+        state: 'running',
+        note: bridge ? 'Approve the transaction in your wallet.' : undefined,
+      });
       const startedAt = Date.now();
       const tx = await deployed.callTx.redeemClaim(attestation.claim, attestation.signature);
       const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
       emit('stage', {
         id: 'submit',
         state: 'done',
-        detail: `block ${tx.public.blockHeight} · ${seconds}s`,
+        detail:
+          `block ${tx.public.blockHeight} · ${seconds}s` +
+          (bridge ? ' · paid by your wallet' : ''),
         txId: String(tx.public.txId),
       });
 
@@ -400,9 +542,13 @@ async function main(): Promise<void> {
           : message,
       });
     } finally {
-      reply.raw.end();
+      // Release the shared provider first: anything left borrowed here would
+      // make every later redemption fail.
+      releaseWallet?.();
+      if (session) bridges.delete(session.id);
+      bridge?.close();
     }
-  });
+  }
 
   const port = Number(process.env.MAILPROOF_WEB_PORT ?? 3000);
   await app.listen({ port, host: '127.0.0.1' });
