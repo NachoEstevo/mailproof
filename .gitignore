@@ -1,0 +1,27 @@
+# Secrets and environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Private email fixtures — never commit a real .eml
+fixtures/private-emails/
+*.eml
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+managed/
+.next/
+coverage/
+
+# Tooling caches
+.turbo/
+*.tsbuildinfo
+.vite/
+
+# OS
+.DS_Store
+Thumbs.db
