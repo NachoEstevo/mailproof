@@ -22,6 +22,7 @@ const els = {
   dropzone: $('dropzone'),
   file: $('file'),
   loadSample: $('load-sample'),
+  loadDemoEmail: $('load-demo-email'),
   evidence: $('evidence'),
   stages: $('stages'),
   redeem: $('redeem'),
@@ -336,6 +337,9 @@ async function refreshState() {
     return;
   }
 
+  // Gitignored evidence that only exists on the machine that received it.
+  els.loadDemoEmail.hidden = !state.demoEmailAvailable;
+
   els.chips.replaceChildren(
     chip(state.network, 'ok'),
     chip(state.verificationMode, state.verificationMode === 'dkim-direct' ? 'ok' : 'warn'),
@@ -388,15 +392,23 @@ els.file.addEventListener('change', async () => {
   els.file.value = '';
 });
 
-els.loadSample.addEventListener('click', async () => {
+/** Both fallbacks are served by the daemon, so they share one loader. */
+async function loadFromDaemon(path, label) {
   try {
-    const response = await fetch(`${DAEMON}/api/sample-eml`);
+    const response = await fetch(`${DAEMON}${path}`);
     if (!response.ok) throw new Error(`daemon replied ${response.status}`);
-    await useEml(await response.text(), 'the synthetic sample');
+    await useEml(await response.text(), label);
   } catch (error) {
     notify(daemonHint(error), 'bad');
   }
-});
+}
+
+els.loadSample.addEventListener('click', () =>
+  loadFromDaemon('/api/sample-eml', 'the synthetic sample'),
+);
+els.loadDemoEmail.addEventListener('click', () =>
+  loadFromDaemon('/api/demo-eml', "this machine's demo email"),
+);
 
 // The panel outlives the tab it was opened over, so keep the source in step.
 chrome.tabs.onActivated.addListener(() => void detectSource());
