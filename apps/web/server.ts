@@ -54,6 +54,7 @@ import {
 import { AttestorRejection, fetchHealth, requestAttestation } from '../../src/attestor-client.js';
 import { deriveSubjectBinding } from '../../packages/shared/claim.js';
 import { verifyDkim } from '../../packages/shared/dkim.js';
+import { extensionOriginFromManifest } from '../../packages/shared/extension-id.js';
 import { toHex } from '../../packages/shared/hashes.js';
 import {
   dkimDnsRecordName,
@@ -85,6 +86,16 @@ type Emit = (event: string, data: unknown) => void;
 
 /** The demo email is private (§61.3): gitignored, served only on localhost. */
 const PRIVATE_DEMO_EML = path.resolve(here, '../../fixtures/private-emails/flight-edu.eml');
+
+/**
+ * The side panel is a first-class client of this daemon and is a different
+ * origin, so it needs CORS. Exactly one origin is allowed, derived from the
+ * `key` the extension manifest pins: `*` would let any page or extension the
+ * user happens to have open post someone's mail into this process.
+ */
+const EXTENSION_ORIGIN = extensionOriginFromManifest(
+  path.resolve(here, '../extension/manifest.json'),
+);
 
 interface BlueprintEntry {
   slug: string;
@@ -185,6 +196,28 @@ async function main(): Promise<void> {
   };
 
   const app = Fastify({ logger: false, bodyLimit: 10_000_000 });
+
+  /** The allowed origin, echoed back only on an exact match. */
+  const corsOrigin = (request: { headers: Record<string, unknown> }): string | undefined =>
+    request.headers.origin === EXTENSION_ORIGIN ? EXTENSION_ORIGIN : undefined;
+
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = corsOrigin(request as never);
+    if (!origin) return;
+    reply.header('access-control-allow-origin', origin).header('vary', 'origin');
+
+    // The panel posts text/plain, which is CORS-safelisted and so never
+    // preflighted. Answer OPTIONS anyway so a later content type does not
+    // silently start failing.
+    if (request.method === 'OPTIONS') {
+      await reply
+        .header('access-control-allow-methods', 'GET, POST, OPTIONS')
+        .header('access-control-allow-headers', 'content-type')
+        .header('access-control-max-age', '600')
+        .status(204)
+        .send();
+    }
+  });
 
   const redemptions = new Mutex();
   /** Bridges awaiting browser answers, keyed by the redemption's session id. */
@@ -372,10 +405,15 @@ async function main(): Promise<void> {
    * devnet wallet this process holds.
    */
   app.post('/api/redeem', async (request, reply) => {
+    // writeHead goes straight to the socket, so it does not pick up the
+    // headers the CORS hook set on `reply`. Repeat the one that matters or
+    // the side panel cannot read its own stream.
+    const origin = corsOrigin(request as never);
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
       connection: 'keep-alive',
+      ...(origin ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
     });
     const emit: Emit = (event, data) => {
       reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
