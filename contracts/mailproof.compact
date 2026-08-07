@@ -1,0 +1,251 @@
+pragma language_version >= 0.23;
+
+import CompactStandardLibrary;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MailProof — one-time redemption of an attestor-signed email claim.
+//
+// The attestor verifies a ZK Email proof off-chain and signs a canonical
+// ClaimAttestationV1. This contract verifies that signature, checks the claim
+// belongs to this campaign/blueprint/issuer, checks the caller is the subject
+// the claim was issued to, and consumes the claim's nullifier exactly once.
+//
+// Trust boundary: the attestor is trusted in the MVP. If it signs a false
+// claim, this contract accepts it. See docs/KNOWN_LIMITATIONS.md.
+//
+// Every value the caller supplies is constrained here. Nothing is taken on
+// faith from TypeScript. See docs/01-product-and-architecture.md §17, §18.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Canonical claim. The field order below IS the signed message layout and
+/// must stay in lockstep with `canonicalClaimHash` and its TypeScript twin in
+/// packages/shared/claim.ts. Changing either without the other silently
+/// breaks every signature. See docs/03-tests-security-fallbacks.md §44.2.
+export struct ClaimAttestationV1 {
+  version: Uint<8>,
+  claimType: Uint<8>,
+  blueprintIdHash: Bytes<32>,
+  issuerDomainHash: Bytes<32>,
+  campaignId: Bytes<32>,
+  subjectBindingHash: Bytes<32>,
+  claimNullifier: Bytes<32>,
+  proofDigest: Bytes<32>,
+}
+
+/// Schnorr signature over the proof system's embedded Jubjub curve.
+/// `announcement` is R = k·G; the response s = k + c·x mod l is a 252-bit
+/// scalar, split across two limbs because Compact caps `Uint` at 248 bits.
+/// `packages/shared/schnorr.ts` has `splitScalar`/`joinScalar` for this.
+export struct SchnorrSignature {
+  announcement: JubjubPoint,
+  responseHi: Uint<124>,
+  responseLo: Uint<128>,
+}
+
+// ─── Ledger ──────────────────────────────────────────────────────────────────
+
+/// Public key of the only attestor whose signatures this contract accepts.
+export ledger attestorPublicKey: JubjubPoint;
+
+/// Usage context. Binds claims to this deployment so a claim minted for one
+/// application cannot be replayed into another. See §12.4.
+export ledger campaignId: Bytes<32>;
+
+/// The single pinned ZK Email blueprint this deployment accepts.
+export ledger allowedBlueprintIdHash: Bytes<32>;
+
+/// The single DKIM issuer domain this deployment accepts.
+export ledger allowedIssuerDomainHash: Bytes<32>;
+
+/// The single claim type this deployment accepts (1 = FLIGHT_CANCELLED).
+export ledger allowedClaimType: Uint<8>;
+
+/// Nullifiers already consumed. Membership here is what makes a claim
+/// one-time. Holds derived nullifiers only — never a raw email identifier.
+export ledger usedNullifiers: Set<Bytes<32>>;
+
+/// Number of claims approved. Public by design: the demo shows it advance
+/// exactly once per redemption.
+export ledger approvedClaimCount: Counter;
+
+constructor(
+  attestorPk: JubjubPoint,
+  campaign: Bytes<32>,
+  blueprintIdHash: Bytes<32>,
+  issuerDomainHash: Bytes<32>,
+  claimType: Uint<8>,
+) {
+  attestorPublicKey = disclose(attestorPk);
+  campaignId = disclose(campaign);
+  allowedBlueprintIdHash = disclose(blueprintIdHash);
+  allowedIssuerDomainHash = disclose(issuerDomainHash);
+  allowedClaimType = disclose(claimType);
+}
+
+// ─── Private state ───────────────────────────────────────────────────────────
+
+/// The subject's long-lived secret. It never leaves private state and is
+/// never disclosed: only a campaign-scoped hash of it is compared against the
+/// signed claim, which is what binds the claim to this user. See §13.1, §73.
+witness subjectSecret(): Bytes<32>;
+
+// ─── Domain separation (§44.1) ───────────────────────────────────────────────
+//
+// Compact has no module-level constants, so these are zero-argument circuits.
+// `pad` right-pads the ASCII bytes with zeros to 32 bytes, which the
+// TypeScript side reproduces exactly.
+
+circuit domainClaim(): Bytes<32> {
+  return pad(32, "MAILPROOF:CLAIM:V1");
+}
+
+circuit domainSubject(): Bytes<32> {
+  return pad(32, "MAILPROOF:SUBJECT:V1");
+}
+
+circuit domainChallenge(): Bytes<32> {
+  return pad(32, "MAILPROOF:SCHNORR:V1");
+}
+
+// Order of the Jubjub prime-order subgroup, as 124-bit and 128-bit limbs:
+//   l = 0x0e7db4ea6533afa906673b0101343b00a6682093ccc81082d0970e5ed6f72cb7
+//
+// Verified empirically against the runtime rather than copied from memory:
+// (l-1)·G + G == identity, and l itself is rejected as an EmbeddedFr scalar.
+// contracts/tests/jubjub-constants.test.ts re-derives both limbs on every
+// run, so the constants cannot silently drift.
+
+circuit jubjubOrderHi(): Uint<124> {
+  return 19261898452744832053602769315862690560;
+}
+
+circuit jubjubOrderLo(): Uint<128> {
+  return 221192506920607668564158609621008198839;
+}
+
+/// True when the two limbs encode a scalar strictly below l. Compared
+/// lexicographically because no single Uint is wide enough to hold l.
+circuit scalarInRange(hi: Uint<124>, lo: Uint<128>): Boolean {
+  return (hi < jubjubOrderHi())
+      || ((hi == jubjubOrderHi()) && (lo < jubjubOrderLo()));
+}
+
+/// Recombine the limbs into the field element the curve operations take.
+circuit scalarToField(hi: Uint<124>, lo: Uint<128>): Field {
+  return (hi as Field) * 340282366920938463463374607431768211456 + (lo as Field);
+}
+
+// ─── Canonical hashing ───────────────────────────────────────────────────────
+//
+// Both of these are exported as pure circuits so the test suite can compare
+// them byte-for-byte against the independent TypeScript implementation the
+// attestor uses. That comparison is the golden-vector test §44.3 asks for.
+
+/// The message the attestor signs. Domain-separated, fixed field order, no
+/// JSON — property order can never change the signature.
+export circuit canonicalClaimHash(claim: ClaimAttestationV1): Bytes<32> {
+  return persistentHash<Vector<9, Bytes<32>>>([
+    domainClaim(),
+    upgradeFromTransient(claim.version as Field),
+    upgradeFromTransient(claim.claimType as Field),
+    claim.blueprintIdHash,
+    claim.issuerDomainHash,
+    claim.campaignId,
+    claim.subjectBindingHash,
+    claim.claimNullifier,
+    claim.proofDigest,
+  ]);
+}
+
+/// Campaign-scoped commitment to the subject. The same secret yields a
+/// different binding in a different campaign, so claims cannot be correlated
+/// across applications by their subject binding.
+export circuit deriveSubjectBinding(secret: Bytes<32>, campaign: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([domainSubject(), secret, campaign]);
+}
+
+// ─── Schnorr verification ────────────────────────────────────────────────────
+
+/// Big-endian assembly of four bytes into a field element.
+circuit be4(a: Uint<8>, b: Uint<8>, c: Uint<8>, d: Uint<8>): Field {
+  return (a as Field) * 16777216
+       + (b as Field) * 65536
+       + (c as Field) * 256
+       + (d as Field);
+}
+
+/// Shift an accumulator left by four bytes and append four more.
+circuit push4(acc: Field, a: Uint<8>, b: Uint<8>, c: Uint<8>, d: Uint<8>): Field {
+  return acc * 4294967296 + be4(a, b, c, d);
+}
+
+/// Fiat-Shamir challenge c = H(domain, R, P, m), reduced to 224 bits.
+///
+/// The reduction is structural, not modular: we take the leading 28 bytes of
+/// the hash, so the result is always below 2^224 and therefore always a valid
+/// Jubjub scalar. That matters because the runtime *crashes* rather than
+/// asserting when handed a scalar >= l, so the challenge must never be able
+/// to reach that range. 224 bits is far above the 128 bits Schnorr soundness
+/// requires. Compact has no mutable locals, hence the explicit fold.
+circuit schnorrChallenge(r: JubjubPoint, pk: JubjubPoint, messageHash: Bytes<32>): Field {
+  const h = persistentHash<Vector<4, Bytes<32>>>([
+    domainChallenge(),
+    persistentHash<JubjubPoint>(r),
+    persistentHash<JubjubPoint>(pk),
+    messageHash,
+  ]);
+  const a0 = be4(h[0], h[1], h[2], h[3]);
+  const a1 = push4(a0, h[4], h[5], h[6], h[7]);
+  const a2 = push4(a1, h[8], h[9], h[10], h[11]);
+  const a3 = push4(a2, h[12], h[13], h[14], h[15]);
+  const a4 = push4(a3, h[16], h[17], h[18], h[19]);
+  const a5 = push4(a4, h[20], h[21], h[22], h[23]);
+  return push4(a5, h[24], h[25], h[26], h[27]);
+}
+
+/// Standard Schnorr check: s·G == R + c·P.
+export circuit verifySchnorr(
+  pk: JubjubPoint,
+  messageHash: Bytes<32>,
+  sig: SchnorrSignature,
+): Boolean {
+  const c = schnorrChallenge(sig.announcement, pk, messageHash);
+  const s = scalarToField(sig.responseHi, sig.responseLo);
+  return ecMulGenerator(s) == ecAdd(sig.announcement, ecMul(pk, c));
+}
+
+// ─── Redemption ──────────────────────────────────────────────────────────────
+
+/// Verify an attestor-signed claim and consume it exactly once.
+///
+/// Error strings are the stable codes listed in §42.3 — the tests assert on
+/// them, so treat them as API.
+export circuit redeemClaim(claim: ClaimAttestationV1, sig: SchnorrSignature): [] {
+  assert(claim.version == 1, "invalid claim encoding");
+  assert(claim.claimType == allowedClaimType, "wrong claim type");
+  assert(claim.blueprintIdHash == allowedBlueprintIdHash, "wrong blueprint");
+  assert(claim.issuerDomainHash == allowedIssuerDomainHash, "wrong issuer");
+  assert(claim.campaignId == campaignId, "wrong campaign");
+
+  // Binds the claim to whoever holds the subject secret in private state.
+  // Someone who steals the signed claim cannot redeem it without that secret.
+  assert(
+    claim.subjectBindingHash == deriveSubjectBinding(subjectSecret(), campaignId),
+    "subject binding mismatch"
+  );
+
+  // Range-check before use: a scalar >= l would fault the runtime instead of
+  // failing as a rejected signature.
+  assert(scalarInRange(sig.responseHi, sig.responseLo), "invalid attestor signature");
+  assert(
+    verifySchnorr(attestorPublicKey, canonicalClaimHash(claim), sig),
+    "invalid attestor signature"
+  );
+
+  // Only now does anything become public, and only the derived nullifier —
+  // never the email identifier it came from.
+  const nullifier = disclose(claim.claimNullifier);
+  assert(!usedNullifiers.member(nullifier), "claim already used");
+  usedNullifiers.insert(nullifier);
+  approvedClaimCount.increment(1);
+}
