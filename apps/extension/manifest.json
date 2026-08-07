@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "MailProof",
+  "version": "0.1.0",
+  "description": "Turn a DKIM-signed email into a private, one-time claim redeemed on Midnight.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmWEvOo3m8/XTZOFBBPLKOx8kogqDoGMLnpWdjO+2Kux7pagVqp09PEnxMF13jw0R+Ag/Xq7HIZ2p3IhlNiODV2IS8orn047JpsdS+/UuvHuB6XrJ9DY5s5pc6DVDcX95RsiSdXpny67dwQtcZk58gO6boF0qqeAWq/stpB+j1/+n8NLuEdzIUefcutM8jmymy3BSGAe9zAn0e/6U3dxzUYgM4wV3pGMIMRF8b2gWnTIGg9SK7usILJ5umKnzznrzXPM/JaAwO46LoZKvkkFQWuFUMLzEKpQwRwHMHcv1LqU573/wufO2yhu4RXLU8g9J8nMt2f5y1zQOSAhj3AWHSQIDAQAB",
+  "minimum_chrome_version": "114",
+  "permissions": [
+    "sidePanel",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:3000/*",
+    "https://mail.google.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "MailProof \u2014 verify this email"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://mail.google.com/*"
+      ],
+      "js": [
+        "content-gmail.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
