@@ -261,6 +261,9 @@ async function redeem() {
           [nullifier && `nullifier ${nullifier}`, txId && `tx ${txId}`].filter(Boolean).join('\n'),
         );
         renderDisclosure();
+        // Let the room watch the on-chain counter advance, rather than
+        // leaving the chip on the figure it had when the panel opened.
+        void refreshState();
       },
     });
   } catch (error) {
