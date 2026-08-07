@@ -11,11 +11,12 @@
  * browser. That is a real limitation versus a wallet-connected dApp and is
  * recorded in docs/KNOWN_LIMITATIONS.md — it is not hidden in the UI either.
  *
- * Privacy: the `.eml` is parsed here, on the same machine as the browser. It
- * is never sent to the attestor and never reaches the chain. The UI says
- * exactly that rather than the stronger claim that it never left the browser.
+ * Privacy: the `.eml` is parsed here, on the same machine as the browser. In
+ * DKIM-direct mode (D-007) it is also sent to the local attestor, which must
+ * read it to verify its RSA signature — the UI discloses exactly that. It
+ * never reaches the chain in any mode; the chain records only hashes.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -41,13 +42,14 @@ import {
 } from '../../src/contract.js';
 import { AttestorRejection, fetchHealth, requestAttestation } from '../../src/attestor-client.js';
 import { deriveSubjectBinding } from '../../packages/shared/claim.js';
+import { verifyDkim } from '../../packages/shared/dkim.js';
 import { toHex } from '../../packages/shared/hashes.js';
 import {
   dkimDnsRecordName,
   getHeader,
   parseDkimSignatures,
   parseEml,
-  selectSignatureForDomain,
+  selectSignaturesForDomain,
 } from '../../packages/shared/eml.js';
 
 // @ts-expect-error wallet sync requires WebSocket
@@ -59,18 +61,41 @@ const PUBLIC_DIR = path.join(here, 'public');
 const { network, config: networkConfig } = resolveNetwork();
 const config = loadConfig();
 
-interface DemoEvidence {
-  blueprintSlug: string;
-  publicOutputs: string;
-  proofData: string;
+/**
+ * The `publicOutputs` label for DKIM-direct submissions. The verifier ignores
+ * it, and the nullifier does not derive from it — but it does feed the proof
+ * digest recorded in the claim, so a constant keeps that digest stable for
+ * the same email across submissions.
+ */
+const DKIM_DIRECT_OUTPUTS = 'dkim-direct/v1';
+
+/** The demo email is private (§61.3): gitignored, served only on localhost. */
+const PRIVATE_DEMO_EML = path.resolve(here, '../../fixtures/private-emails/flight-edu.eml');
+
+interface BlueprintEntry {
+  slug: string;
+  status: 'pending' | 'pinned';
+  dkim?: { dnsRecord: string; selector?: string };
 }
 
-function loadDemoEvidence(slug: string): DemoEvidence | undefined {
-  const file =
-    process.env.MAILPROOF_DEMO_EVIDENCE_FILE?.trim() ||
-    path.resolve(here, '../../fixtures/demo-evidence.json');
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as { evidence?: DemoEvidence[] };
-  return (parsed.evidence ?? []).find((e) => e.blueprintSlug === slug);
+/** The active blueprint's allowlist entry — carries the pinned DKIM key. */
+function loadActiveBlueprintEntry(): BlueprintEntry | undefined {
+  const file = JSON.parse(
+    readFileSync(path.resolve(here, '../../config/blueprints.json'), 'utf8'),
+  ) as { blueprints: BlueprintEntry[] };
+  return file.blueprints.find((b) => b.slug === config.blueprintSlug);
+}
+
+/**
+ * Whether this deployment can redeem from a dropped `.eml` at all.
+ *
+ * Only a pinned DKIM-direct blueprint can: the ZK Email path needs a proof
+ * the browser cannot yet generate, and forwarding the raw message to that
+ * verifier would ship the user's email somewhere it does not belong.
+ */
+function dkimDirectEntry(): BlueprintEntry | undefined {
+  const entry = loadActiveBlueprintEntry();
+  return entry?.dkim && entry.status === 'pinned' ? entry : undefined;
 }
 
 async function createProviders(walletCtx: WalletContext) {
@@ -171,6 +196,17 @@ async function main(): Promise<void> {
       claimType: config.claimTypeName,
       blueprint: config.blueprintSlug,
       issuerDomain: config.issuerDomain,
+      // Reported honestly, including the case where the configured slug is
+      // not in the allowlist at all — silently calling that "zk-email" would
+      // describe a mode nothing is actually running in.
+      verificationMode: (() => {
+        const entry = loadActiveBlueprintEntry();
+        if (!entry) return 'unknown';
+        if (!entry.dkim) return 'zk-email';
+        return entry.status === 'pinned' ? 'dkim-direct' : 'dkim-direct (pending)';
+      })(),
+      redeemableFromBrowser: Boolean(dkimDirectEntry()),
+      demoEmailAvailable: existsSync(PRIVATE_DEMO_EML),
       approvedClaimCount: ledger ? Number(ledger.approvedClaimCount) : 0,
       nullifiersUsed: ledger ? Number(ledger.usedNullifiers.size()) : 0,
       attestor: health
@@ -183,13 +219,25 @@ async function main(): Promise<void> {
     };
   });
 
+  /**
+   * The real demo email, when this machine has one. It is gitignored evidence
+   * (§61.3) and this server binds to 127.0.0.1 only — the file is being shown
+   * to its own owner, not published.
+   */
+  app.get('/api/demo-eml', async (_req, reply) => {
+    if (!existsSync(PRIVATE_DEMO_EML)) {
+      return reply.status(404).send({ error: 'no local demo email on this machine' });
+    }
+    return reply.type('text/plain; charset=utf-8').send(readFileSync(PRIVATE_DEMO_EML, 'utf8'));
+  });
+
   /** Structural report on a dropped `.eml`. Values redacted by default. */
   app.post('/api/inspect', async (request, reply) => {
     const raw = typeof request.body === 'string' ? request.body : '';
     try {
       const eml = parseEml(raw);
       const signatures = parseDkimSignatures(eml);
-      const expected = selectSignatureForDomain(signatures, config.issuerDomain);
+      const expected = selectSignaturesForDomain(signatures, config.issuerDomain).length > 0;
       const shape = (name: string) => {
         const header = getHeader(eml, name);
         if (!header) return null;
@@ -215,7 +263,7 @@ async function main(): Promise<void> {
           signedHeaders: s.signedHeaders,
           bodyLengthLimit: s.bodyLength ?? null,
         })),
-        matchesExpectedIssuer: Boolean(expected),
+        matchesExpectedIssuer: expected,
         expectedIssuer: config.issuerDomain,
       };
     } catch (error) {
@@ -225,8 +273,12 @@ async function main(): Promise<void> {
     }
   });
 
-  /** Runs the pipeline, streaming each stage so the UI is never a bare spinner. */
-  app.get('/api/redeem', async (request, reply) => {
+  /**
+   * Runs the pipeline over the submitted `.eml`, streaming each stage so the
+   * UI is never a bare spinner. POST because the message rides in the body —
+   * the client reads the SSE stream off `fetch` rather than EventSource.
+   */
+  app.post('/api/redeem', async (request, reply) => {
     reply.raw.writeHead(200, {
       'content-type': 'text/event-stream',
       'cache-control': 'no-cache',
@@ -237,6 +289,58 @@ async function main(): Promise<void> {
     };
 
     try {
+      const raw = typeof request.body === 'string' ? request.body : '';
+      if (raw.trim().length === 0) {
+        throw new Error('Drop the email first — there is nothing to verify.');
+      }
+
+      // Refuse rather than green-tick a stage that verified nothing. On a
+      // zk-email blueprint this route cannot work — and forwarding the raw
+      // message to that verifier would send the user's email to a service
+      // whose whole point is never to see it.
+      const entry = dkimDirectEntry();
+      if (!entry) {
+        const active = loadActiveBlueprintEntry();
+        throw new Error(
+          !active
+            ? `Blueprint ${config.blueprintSlug} is not in the allowlist. Run: npm run demo:reset`
+            : `Blueprint ${config.blueprintSlug} needs a ZK Email proof, which this demo cannot ` +
+              `generate yet. Switch with: npm run demo:reset -- <a pinned dkim blueprint>`,
+        );
+      }
+
+      // Local pre-check with the same pinned key the attestor holds. Not the
+      // authoritative verdict (the attestor re-verifies), but it turns "the
+      // signature is broken" into a stage the audience can see.
+      emit('stage', { id: 'verify', state: 'running' });
+      const eml = parseEml(raw);
+      const candidates = selectSignaturesForDomain(parseDkimSignatures(eml), config.issuerDomain);
+      if (candidates.length === 0) {
+        throw new Error(`No DKIM signature from ${config.issuerDomain} on this message.`);
+      }
+      let check = undefined;
+      for (const candidate of candidates) {
+        const attempt = verifyDkim(raw, candidate, { dnsRecord: entry.dkim!.dnsRecord });
+        check ??= attempt;
+        if (attempt.valid && !attempt.expired) {
+          check = attempt;
+          break;
+        }
+      }
+      if (check!.expired) throw new Error('The DKIM signature has expired (x=).');
+      if (!check!.valid) {
+        throw new Error(
+          check!.bodyHashMatches
+            ? 'DKIM signature mismatch — a signed header was altered.'
+            : 'DKIM body hash mismatch — the message body was altered after signing.',
+        );
+      }
+      emit('stage', {
+        id: 'verify',
+        state: 'done',
+        detail: `d=${check!.domain} · body hash ✓ · RSA signature ✓`,
+      });
+
       const health = await fetchHealth(config.attestorUrl);
       emit('stage', {
         id: 'attestor',
@@ -246,17 +350,14 @@ async function main(): Promise<void> {
           : 'Attestor is running the fixture verifier — no proof is being checked.',
       });
 
-      const evidence = loadDemoEvidence(config.blueprintSlug);
-      if (!evidence) throw new Error(`no demo evidence for ${config.blueprintSlug}`);
-
       const attestation = await requestAttestation(config.attestorUrl, {
-        blueprintId: evidence.blueprintSlug,
+        blueprintId: config.blueprintSlug,
         campaignId: config.campaign,
         subjectBinding: toHex(
           deriveSubjectBinding(privateState.subjectSecret, config.campaignId),
         ),
-        publicOutputs: evidence.publicOutputs,
-        proofData: evidence.proofData,
+        publicOutputs: DKIM_DIRECT_OUTPUTS,
+        proofData: raw,
       });
       emit('stage', {
         id: 'attestor',

@@ -19,6 +19,8 @@ import { ATTESTOR_ERROR, AttestorError, toAttestorError } from './errors.js';
 import { FixtureProofVerifier, type FixtureEntry } from './fixture-verifier.js';
 import { logAttest, newRequestId, type Sink } from './logging.js';
 import { attestRequestSchema, serialiseSignedClaim } from './schema.js';
+import { DkimProofVerifier } from './dkim-verifier.js';
+import { RoutingProofVerifier } from './routing-verifier.js';
 import type { ProofVerifier } from './verifier.js';
 import { ZkEmailProofVerifier } from './zk-email-verifier.js';
 
@@ -126,12 +128,39 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }
   });
 
-  // Fastify raises this before the handler when the body exceeds bodyLimit.
+  /**
+   * Errors Fastify raises before a handler runs — an oversized body, a
+   * malformed JSON payload, an unroutable request.
+   *
+   * These used to collapse to an unlogged 500, which meant a client sending
+   * broken JSON got "INTERNAL_ERROR" and left no trace to diagnose it by.
+   * The framework's own status is preserved when it set one, and every case
+   * is logged like any other rejection.
+   */
   app.setErrorHandler((error, _request, reply) => {
-    if ((error as { statusCode?: number }).statusCode === 413) {
-      return reply.status(413).send({ error: ATTESTOR_ERROR.REQUEST_TOO_LARGE });
-    }
-    return reply.status(500).send({ error: ATTESTOR_ERROR.INTERNAL_ERROR });
+    const status = (error as { statusCode?: number }).statusCode ?? 500;
+    const code =
+      status === 413
+        ? ATTESTOR_ERROR.REQUEST_TOO_LARGE
+        : status >= 400 && status < 500
+          ? ATTESTOR_ERROR.INVALID_REQUEST
+          : ATTESTOR_ERROR.INTERNAL_ERROR;
+    logAttest(
+      {
+        requestId: newRequestId(),
+        result: code === ATTESTOR_ERROR.INTERNAL_ERROR ? 'error' : 'rejected',
+        errorCode: code,
+        // Framework messages describe the envelope, never the payload.
+        detail:
+          code === ATTESTOR_ERROR.INTERNAL_ERROR
+            ? undefined
+            : error instanceof Error
+              ? error.message
+              : undefined,
+      },
+      deps.logSink,
+    );
+    return reply.status(status).send({ error: code });
   });
 
   return app;
@@ -140,12 +169,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 /**
  * Pick the verifier.
  *
- * Defaults to the real one. The fixture verifier requires an explicit opt-in
- * *and* announces itself loudly, because a fake verifier that looks real is
- * how a project ends up demoing "the backend said true" (§8, option E).
+ * Defaults to the real ones — DKIM-direct for blueprints with a pinned DNS
+ * key, ZK Email for the rest, routed per blueprint. The fixture verifier
+ * requires an explicit opt-in *and* announces itself loudly, because a fake
+ * verifier that looks real is how a project ends up demoing "the backend
+ * said true" (§8, option E).
  */
 function resolveVerifier(env: NodeJS.ProcessEnv, moduleDir: string): ProofVerifier {
-  if (env.MAILPROOF_ALLOW_FIXTURE_VERIFIER !== '1') return new ZkEmailProofVerifier();
+  if (env.MAILPROOF_ALLOW_FIXTURE_VERIFIER !== '1') {
+    return new RoutingProofVerifier(new DkimProofVerifier(), new ZkEmailProofVerifier());
+  }
 
   const file =
     env.MAILPROOF_DEMO_EVIDENCE_FILE?.trim() ||

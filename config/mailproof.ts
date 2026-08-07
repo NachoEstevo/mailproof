@@ -60,31 +60,51 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 /**
- * Campaign chosen by the last `npm run demo:reset`.
+ * Demo selection chosen by the last `npm run demo:reset`.
  *
  * A campaign is baked into the contract at construction, so a fresh campaign
  * means a fresh set of nullifiers — which is what makes the demo repeatable
- * without hand-editing state mid-pitch (§50.5). Persisted to a file rather
- * than an env var so the deploy script, the attestor and the web app all see
- * the same value without having to be launched from one shell.
+ * without hand-editing state mid-pitch (§50.5). The active blueprint and its
+ * issuer travel in the same file for the same reason: the contract pins their
+ * hashes at deploy time, so the deploy script, the attestor and the web app
+ * must all see the same values without being launched from one shell.
  */
 export const DEMO_STATE_FILE = '.mailproof-demo.json';
 
-function persistedCampaign(cwd: string): string | null {
+export interface DemoState {
+  readonly campaign: string;
+  readonly blueprintSlug?: string;
+  readonly issuerDomain?: string;
+  readonly claimType?: ClaimTypeName;
+}
+
+function persistedDemoState(cwd: string): Partial<DemoState> {
   try {
     const raw = readFileSync(path.join(cwd, DEMO_STATE_FILE), 'utf8');
-    const parsed = JSON.parse(raw) as { campaign?: unknown };
-    return typeof parsed.campaign === 'string' && parsed.campaign ? parsed.campaign : null;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const str = (key: string) =>
+      typeof parsed[key] === 'string' && parsed[key] ? (parsed[key] as string) : undefined;
+    return {
+      campaign: str('campaign'),
+      blueprintSlug: str('blueprintSlug'),
+      issuerDomain: str('issuerDomain'),
+      claimType: str('claimType') as ClaimTypeName | undefined,
+    };
   } catch {
-    return null;
+    return {};
   }
 }
 
-export function writeDemoCampaign(campaign: string, cwd = process.cwd()): void {
+export function writeDemoState(state: DemoState, cwd = process.cwd()): void {
   writeFileSync(
     path.join(cwd, DEMO_STATE_FILE),
-    `${JSON.stringify({ campaign, createdAt: new Date().toISOString() }, null, 2)}\n`,
+    `${JSON.stringify({ ...state, createdAt: new Date().toISOString() }, null, 2)}\n`,
   );
+}
+
+/** Back-compat shim for callers that only choose the campaign. */
+export function writeDemoCampaign(campaign: string, cwd = process.cwd()): void {
+  writeDemoState({ campaign }, cwd);
 }
 
 /**
@@ -96,11 +116,15 @@ export function loadConfig(
   cwd: string = process.cwd(),
 ): MailProofConfig {
   // Explicit env wins, then the last demo reset, then the built-in default.
-  const campaign =
-    env.MAILPROOF_CAMPAIGN_ID?.trim() || persistedCampaign(cwd) || DEFAULTS.campaign;
-  const blueprintSlug = env.MAILPROOF_BLUEPRINT_ID?.trim() || DEFAULTS.blueprintSlug;
-  const issuerDomain = env.MAILPROOF_ISSUER_DOMAIN?.trim() || DEFAULTS.issuerDomain;
-  const claimTypeName = (env.MAILPROOF_CLAIM_TYPE?.trim() || DEFAULTS.claimType) as ClaimTypeName;
+  const demo = persistedDemoState(cwd);
+  const campaign = env.MAILPROOF_CAMPAIGN_ID?.trim() || demo.campaign || DEFAULTS.campaign;
+  const blueprintSlug =
+    env.MAILPROOF_BLUEPRINT_ID?.trim() || demo.blueprintSlug || DEFAULTS.blueprintSlug;
+  const issuerDomain =
+    env.MAILPROOF_ISSUER_DOMAIN?.trim() || demo.issuerDomain || DEFAULTS.issuerDomain;
+  const claimTypeName = (env.MAILPROOF_CLAIM_TYPE?.trim() ||
+    demo.claimType ||
+    DEFAULTS.claimType) as ClaimTypeName;
 
   const claimType = CLAIM_TYPE[claimTypeName];
   if (claimType === undefined) {

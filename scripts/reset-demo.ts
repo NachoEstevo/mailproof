@@ -6,15 +6,96 @@
  * means the demo evidence has never been redeemed — without touching state by
  * hand, which is the one thing §50.5 says not to do during a pitch.
  *
- *   npm run demo:reset
+ *   npm run demo:reset [-- <blueprint slug>]
+ *
+ * The optional slug switches which allowlist entry the demo runs on — the
+ * contract pins its hashes at deploy time, so changing blueprints *is* a
+ * reset. Without a slug the previous selection (or the default) is kept.
  */
 import { spawnSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
-import { loadConfig, writeDemoCampaign } from '../config/mailproof';
+import { loadConfig, writeDemoState } from '../config/mailproof';
+import { parseDkimSignatures, parseEml } from '../packages/shared/eml';
 import { getDeployment, resolveNetwork } from '../src/network';
 
 const BLUEPRINTS_FILE = 'config/blueprints.json';
+const PRIVATE_DEMO_EML = 'fixtures/private-emails/flight-edu.eml';
+
+interface AllowlistEntry {
+  slug: string;
+  status: 'pending' | 'pinned';
+  issuerDomain: string;
+  claimType: string;
+  campaigns: string[];
+  dkim?: { dnsRecord: string; selector?: string };
+}
+
+/**
+ * Which blueprint to deploy against.
+ *
+ * An explicit argument wins. Otherwise the previous selection is kept — but
+ * only if it is still usable: `.mailproof-demo.json` is gitignored, so on a
+ * fresh checkout `loadConfig` falls back to a built-in default that may name
+ * a `pending` entry. Deploying a contract pinned to one produces a demo where
+ * every claim dies at the attestor, so a pinned entry is chosen instead.
+ */
+function chooseBlueprint(entries: AllowlistEntry[], requested: string | undefined): AllowlistEntry {
+  if (requested) {
+    const explicit = entries.find((b) => b.slug === requested);
+    if (!explicit) {
+      console.error(`\n❌ ${BLUEPRINTS_FILE} has no entry for ${requested}\n`);
+      process.exit(1);
+    }
+    if (explicit.status !== 'pinned') {
+      console.log(`  ⚠ ${explicit.slug} is "pending" — the attestor will refuse every claim.`);
+    }
+    return explicit;
+  }
+
+  const previous = entries.find((b) => b.slug === loadConfig().blueprintSlug);
+  if (previous?.status === 'pinned') return previous;
+
+  const pinned = entries.find((b) => b.status === 'pinned');
+  if (!pinned) {
+    console.error(`\n❌ ${BLUEPRINTS_FILE} has no pinned blueprint to demo\n`);
+    process.exit(1);
+  }
+  if (previous) {
+    console.log(`  ℹ ${previous.slug} is pending; falling back to ${pinned.slug}`);
+  }
+  return pinned;
+}
+
+function readAllowlist(): AllowlistEntry[] {
+  return (JSON.parse(readFileSync(BLUEPRINTS_FILE, 'utf8')) as { blueprints: AllowlistEntry[] })
+    .blueprints;
+}
+
+/**
+ * The demo email is real, and real DKIM signatures expire (`x=`). Better to
+ * hear it at reset time than on stage.
+ */
+function warnIfDemoEmailExpiring(issuerDomain: string): void {
+  if (!existsSync(PRIVATE_DEMO_EML)) return;
+  try {
+    const signatures = parseDkimSignatures(parseEml(readFileSync(PRIVATE_DEMO_EML, 'utf8')));
+    const sig = signatures.find((s) => s.domain?.toLowerCase() === issuerDomain.toLowerCase());
+    if (!sig?.expiry) return;
+    const msLeft = sig.expiry * 1000 - Date.now();
+    const days = msLeft / 86_400_000;
+    if (msLeft <= 0) {
+      console.log(`  ⚠ ${PRIVATE_DEMO_EML} DKIM signature EXPIRED — send a fresh email`);
+    } else if (days < 3) {
+      console.log(
+        `  ⚠ ${PRIVATE_DEMO_EML} DKIM signature expires in ${days.toFixed(1)} days ` +
+          `(${new Date(sig.expiry * 1000).toISOString()})`,
+      );
+    }
+  } catch {
+    // A malformed private fixture is its own problem; not this script's.
+  }
+}
 
 /**
  * Point the attestor's allowlist at the new campaign.
@@ -68,16 +149,25 @@ async function main(): Promise<void> {
   const campaign = `mailproof-demo-${stamp}`;
 
   console.log(`\n─── demo:reset ──────────────────────────────────────────────`);
+  const entry = chooseBlueprint(readAllowlist(), process.argv[2]?.trim() || undefined);
+
   console.log(`  network:    ${network}`);
-  console.log(`  campaign:   ${campaign}\n`);
+  console.log(`  campaign:   ${campaign}`);
+  console.log(`  blueprint:  ${entry.slug}  (${entry.dkim ? 'dkim-direct' : 'zk-email'})`);
+  console.log(`  issuer:     ${entry.issuerDomain}\n`);
 
-  writeDemoCampaign(campaign);
-
-  // The contract and the attestor must agree on the campaign, or every
-  // request is refused with CAMPAIGN_NOT_ALLOWED.
-  const { blueprintSlug } = loadConfig();
-  repointAllowlist(blueprintSlug, campaign);
-  console.log(`  allowlist:  ${blueprintSlug} → ${campaign}\n`);
+  // Contract, attestor and web app must agree on all four values, or a claim
+  // signed by one is rejected by the other with a confusing error.
+  writeDemoState({
+    campaign,
+    blueprintSlug: entry.slug,
+    issuerDomain: entry.issuerDomain,
+    claimType: entry.claimType as never,
+  });
+  repointAllowlist(entry.slug, campaign);
+  console.log(`  allowlist:  ${entry.slug} → ${campaign}`);
+  warnIfDemoEmailExpiring(entry.issuerDomain);
+  console.log('');
 
   // Redeploy against the new campaign. Fresh contract, empty nullifier set.
   run('npm', ['run', 'compile']);

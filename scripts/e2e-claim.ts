@@ -78,6 +78,20 @@ const uniqueClaimId = parseClaimId(process.argv);
  */
 const viaAttestor = process.argv.includes('--via-attestor');
 
+/**
+ * With `--eml <path>` the attestor receives that raw message as the proof —
+ * the DKIM-direct path (D-007). Implies --via-attestor: there is no local
+ * signing mode for an email.
+ */
+function parseEmlPath(argv: string[]): string | undefined {
+  const i = argv.indexOf('--eml');
+  if (i === -1) return undefined;
+  const value = argv[i + 1];
+  if (!value) fail('--eml requires a path');
+  return value;
+}
+const emlPath = parseEmlPath(process.argv);
+
 interface DemoEvidence {
   blueprintSlug: string;
   publicOutputs: string;
@@ -175,7 +189,7 @@ async function main(): Promise<void> {
   let claim;
   let signature;
 
-  if (viaAttestor) {
+  if (viaAttestor || emlPath) {
     const health = await fetchHealth(mailproofConfig.attestorUrl).catch((error) =>
       fail(`attestor unreachable at ${mailproofConfig.attestorUrl}: ${error.message}`),
     );
@@ -185,7 +199,13 @@ async function main(): Promise<void> {
       console.log('      ⚠ attestor is running the FIXTURE verifier — no proof is being checked');
     }
 
-    const evidence = loadDemoEvidence(mailproofConfig.blueprintSlug);
+    const evidence = emlPath
+      ? {
+          blueprintSlug: mailproofConfig.blueprintSlug,
+          publicOutputs: 'dkim-direct/v1',
+          proofData: readFileSync(emlPath, 'utf8'),
+        }
+      : loadDemoEvidence(mailproofConfig.blueprintSlug);
     const subjectBinding = toHex(
       deriveSubjectBinding(privateState.subjectSecret, mailproofConfig.campaignId),
     );
@@ -219,7 +239,11 @@ async function main(): Promise<void> {
   console.log(`      nullifier: ${toHex(claim.claimNullifier).slice(0, 22)}…`);
 
   if (before.usedNullifiers.member(claim.claimNullifier)) {
-    fail(`nullifier for "${uniqueClaimId}" is already consumed — pass a different --claim-id`);
+    fail(
+      emlPath
+        ? 'this email was already redeemed in this campaign — run: npm run demo:reset'
+        : `nullifier for "${uniqueClaimId}" is already consumed — pass a different --claim-id`,
+    );
   }
 
   // ── 3 ─────────────────────────────────────────────────────────────────────

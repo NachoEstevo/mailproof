@@ -193,19 +193,32 @@ export function parseDkimSignatures(eml: ParsedEml): DkimSignature[] {
 }
 
 /**
- * Pick the signature for an expected domain.
+ * Every signature claiming an expected domain, in message order.
  *
  * A message can carry several DKIM signatures — the sender's, the mailing
  * list's, the relay's. Taking the first one is a real trap (§20.8): it may
  * belong to a forwarder rather than to the party whose claim we care about.
  * So callers must say which domain they mean.
+ *
+ * All of them are returned, not just the first, because one domain can sign
+ * twice — across a key rotation, or when a relay re-signs. RFC 6376 §6.1
+ * requires trying candidates until one verifies; stopping at the first lets a
+ * single prepended junk signature deny an otherwise valid message.
  */
+export function selectSignaturesForDomain(
+  signatures: readonly DkimSignature[],
+  domain: string,
+): DkimSignature[] {
+  const wanted = domain.trim().toLowerCase();
+  return signatures.filter((s) => s.domain?.trim().toLowerCase() === wanted);
+}
+
+/** The first signature claiming a domain. Prefer `selectSignaturesForDomain`. */
 export function selectSignatureForDomain(
   signatures: readonly DkimSignature[],
   domain: string,
 ): DkimSignature | undefined {
-  const wanted = domain.trim().toLowerCase();
-  return signatures.find((s) => s.domain?.trim().toLowerCase() === wanted);
+  return selectSignaturesForDomain(signatures, domain)[0];
 }
 
 /** The DNS name holding the public key for a signature. */

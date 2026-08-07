@@ -62,6 +62,33 @@ export function canonicalizeHeaderSimple(raw: string): string {
 }
 
 /**
+ * Truncate to `l=` octets (§3.5).
+ *
+ * `l=` counts *octets*, and JS string indices are UTF-16 code units, so
+ * `slice` silently disagrees with the spec for any non-ASCII body — an
+ * accented character is two octets and one code unit. Going through a Buffer
+ * keeps the count in the units the signer used.
+ */
+export function truncateToOctets(text: string, octets: number): string {
+  const bytes = Buffer.from(text, 'utf8');
+  if (bytes.length <= octets) return text;
+  return bytes.subarray(0, octets).toString('utf8');
+}
+
+/**
+ * The raw body octets a signature covers.
+ *
+ * Conservative on purpose: `l=` is defined over the *canonicalised* body,
+ * which is never longer than the raw body, so truncating the raw body to the
+ * same octet count can only ever select a subset of what was signed. Used for
+ * claim extraction, where including unsigned content is the failure that
+ * matters and excluding signed content merely denies.
+ */
+export function signedBody(body: string, bodyLength: number | undefined): string {
+  return bodyLength === undefined ? body : truncateToOctets(body, bodyLength);
+}
+
+/**
  * Assemble the header block the signature covers.
  *
  * `h=` may name the same header more than once — Google routinely oversigns —
@@ -161,9 +188,15 @@ export function verifyDkim(
     return { ...base, valid: false, bodyHashMatches: false, signatureMatches: false, reason: `unsupported algorithm ${signature.algorithm}` };
   }
 
-  // 1. Body hash. `l=` limits how much of the body is covered.
-  const body = signature.bodyLength !== undefined ? eml.body.slice(0, signature.bodyLength) : eml.body;
-  const canonicalBody = bodyMode === 'relaxed' ? canonicalizeBodyRelaxed(body) : canonicalizeBodySimple(body);
+  // 1. Body hash. §3.5: `l=` counts octets of the *canonicalised* body, so
+  //    canonicalise first and truncate second — the other order disagrees
+  //    with any conformant signer whenever whitespace is collapsed.
+  const fullCanonicalBody =
+    bodyMode === 'relaxed' ? canonicalizeBodyRelaxed(eml.body) : canonicalizeBodySimple(eml.body);
+  const canonicalBody =
+    signature.bodyLength !== undefined
+      ? truncateToOctets(fullCanonicalBody, signature.bodyLength)
+      : fullCanonicalBody;
   const bodyHash = createHash('sha256').update(canonicalBody, 'utf8').digest('base64');
   const bodyHashMatches = bodyHash === signature.bodyHash;
 

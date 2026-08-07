@@ -1,7 +1,7 @@
 {
   "$comment": [
-    "Blueprint allowlist (\u00a720.9, \u00a768.2). The attestor signs claims only for",
-    "entries listed here, and only for the exact pinned slug \u2014 never `latest`.",
+    "Blueprint allowlist (§20.9, §68.2). The attestor signs claims only for",
+    "entries listed here, and only for the exact pinned slug — never `latest`.",
     "",
     "`status` is load-bearing, not documentation. While it is \"pending\", the",
     "real ZK Email verifier refuses to run: the slug below has not been",
@@ -26,6 +26,27 @@
       "markerOutput": "cancellationMarker",
       "uniqueIdOutput": "uniqueClaimId",
       "markerPattern": "^Your flight [A-Z0-9-]{2,12} has been cancelled\\.?$"
+    },
+    {
+      "key": "flight-cancel-edu-dkim-v1",
+      "status": "pinned",
+      "slug": "mailproof/FlightCancelledEduDkim@v1",
+      "claimType": "FLIGHT_CANCELLED",
+      "issuerDomain": "udesa.edu.ar",
+      "campaigns": [
+        "mailproof-demo-2608072146"
+      ],
+      "requiredOutputs": [
+        "cancellationMarker",
+        "uniqueClaimId"
+      ],
+      "markerOutput": "cancellationMarker",
+      "uniqueIdOutput": "uniqueClaimId",
+      "markerPattern": "^Your flight [A-Z0-9-]{2,12} has been cancelled\\.?$",
+      "dkim": {
+        "dnsRecord": "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmDCd37beruKGZbzQtwbaTCCYBUhQaZ81/TloS74Jn3/4XRuiXQrK+1/8Hc4+AwqkkYZ0pi6MkNNAI8rXqgtSr2r7d0bm21r21B/2mMdZXc+WKwSQYDmEuH/LWvdb/sMnJayqQN4yVd/O7udvUXGl2t6ZYfUbtCLaY4fjg1oPIZeYpplpqrKeYJHcD2klX8TA67ow0Yjw4Dal1njThO/ia587IjT2B1iBTJFLnb5wLjqhJ90VugWJOkKK+6en7Dxb5rrEzNK5huuzFLSonrecHhyto3TglmtcAWBRZrDO5jn8H/mC7YK6hha+v2xzrCivVT8Y4GAmzQuJ0mXdYCcAjwIDAQAB",
+        "selector": "google"
+      }
     }
   ]
 }

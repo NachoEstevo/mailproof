@@ -12,12 +12,23 @@ La empresa que envía el email no tiene que integrar Midnight. La aplicación qu
 
 ## Estado
 
-**Plan de ejecución v1.0 — todavía no hay código.**
+**Funcionando end-to-end sobre una devnet local de Midnight.**
 
-Este repositorio contiene, por ahora, el documento maestro de producto, arquitectura, implementación, QA, demo y handoff. El código se agrega gate por gate siguiendo [`docs/02-implementation.md`](docs/02-implementation.md).
+- Contrato Compact desplegado: verificación Schnorr in-circuit, binding del sujeto por witness privado, nullifiers de un solo uso. 18 tests de circuito + golden vectors.
+- Attestor HTTP con verificación criptográfica real: **DKIM-direct** (RSA-SHA256 del propio email contra la clave publicada del emisor, RFC 6376 — ver `docs/DECISIONS.md` D-007), con el seam de ZK Email construido y ruteado por blueprint para cuando el blueprint esté compilado en el registry.
+- Demo web: soltás el `.eml`, se verifica la firma RSA, el attestor firma el claim, Midnight lo aprueba (~25s de proving real) y el replay se rechaza con `claim already used`.
+- 139 tests. Corridas e2e consecutivas verificadas contra la cadena.
+
+```bash
+docker compose up -d --wait node indexer
+npm install && npm run demo:reset
+npm run attestor:dev   # terminal 1
+npm run web:dev        # terminal 2  →  http://127.0.0.1:3000
+```
+
+Runbook completo: [`docs/DEMO_RUNBOOK.md`](docs/DEMO_RUNBOOK.md). Qué es real y qué no, sin maquillaje: [`docs/KNOWN_LIMITATIONS.md`](docs/KNOWN_LIMITATIONS.md).
 
 - Proyecto: Hack Buenos Aires 2026
-- Fecha de referencia del plan: 7 de agosto de 2026
 - Licencia: Apache-2.0
 
 ## El problema

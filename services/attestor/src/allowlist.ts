@@ -15,8 +15,10 @@ const blueprintSchema = z
   .object({
     key: z.string().min(1),
     /**
-     * "pending" means the slug is not yet compiled on the registry. The real
-     * verifier refuses to run against it — see zk-email-verifier.ts.
+     * "pending" means the slug is not yet ready to verify against. For a ZK
+     * Email entry that is "not compiled on the registry"; for a DKIM-direct
+     * entry it is "the DNS key has not been pinned and checked". Both
+     * verifiers refuse pending entries.
      */
     status: z.enum(['pending', 'pinned']),
     slug: z
@@ -29,6 +31,28 @@ const blueprintSchema = z
     markerOutput: z.string().min(1),
     uniqueIdOutput: z.string().min(1),
     markerPattern: z.string().min(1),
+    /**
+     * Present only on DKIM-direct entries (D-007): the issuer's published
+     * DKIM public key, pinned here so verification does not depend on DNS
+     * being reachable — or unchanged — at claim time.
+     */
+    dkim: z
+      .strictObject({
+        dnsRecord: z
+          .string()
+          .min(1)
+          .refine((r) => /(^|;)\s*p=/.test(r.replace(/"\s*"/g, '').replace(/"/g, '')), {
+            message: 'dnsRecord must carry a p= public key tag',
+          }),
+        /**
+         * The selector the pinned key belongs to. Optional but strongly
+         * preferred: without it, a signature from the same domain under a
+         * different selector is checked against the wrong key and reported as
+         * tampering.
+         */
+        selector: z.string().min(1).optional(),
+      })
+      .optional(),
   })
   .strict()
   .superRefine((entry, ctx) => {
@@ -70,6 +94,8 @@ export interface BlueprintPolicy {
   readonly markerOutput: string;
   readonly uniqueIdOutput: string;
   readonly markerPattern: string;
+  /** Set only on DKIM-direct entries; routes verification (D-007). */
+  readonly dkim?: { readonly dnsRecord: string; readonly selector?: string };
 }
 
 export class BlueprintAllowlist {

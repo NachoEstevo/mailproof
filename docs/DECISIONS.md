@@ -203,3 +203,59 @@ hold the secret — covered by the second C-09 test. The binding is
 campaign-scoped, so the same user is not linkable across deployments by their
 subject binding. This does **not** prove inbox ownership; see
 `KNOWN_LIMITATIONS.md`.
+
+## D-007 — DKIM-direct verification while the ZK Email blueprint is pending
+
+**Date:** 2026-08-07
+**Status:** accepted
+
+### Context
+
+The pinned ZK Email blueprint does not exist on registry.zk.email yet, which
+left the demo verifying nothing (fixture verifier) while every stage
+downstream of verification was already real. Meanwhile the repo carries a
+complete RFC 6376 verifier (`packages/shared/dkim.ts`), validated against a
+real Google-signed message.
+
+### Decision
+
+Add a second cryptographic path: blueprints that pin a DKIM DNS record in
+`config/blueprints.json` (`dkim.dnsRecord`) are verified directly by the
+attestor — RSA-SHA256 over the message the provider actually signed. A
+routing verifier picks the path per blueprint; ZK Email remains the path for
+every entry without a pinned key.
+
+The nullifier derives from the signed Message-ID, consumed bottom-up per
+§5.4.2, with an instance-count check so an unsigned prepended Message-ID can
+never mint a second nullifier from one signed email.
+
+The claim marker is read only from decoded `text/plain` parts (`mime.ts`),
+never from the transfer-encoded bytes. An adversarial review found this to be
+load-bearing rather than cosmetic: a quoted-printable soft break placed before
+the marker makes the *encoded* text look like it has a line boundary there, so
+searching encoded bytes lets
+
+    Please disregard the earlier notice. It is not true that =
+    Your flight MP401 has been cancelled.
+
+satisfy the anchored `^…$` pattern — from a message that says the opposite of
+the claim, with a perfectly valid signature. Decoding is therefore a security
+requirement, and it must follow each part's declared
+`Content-Transfer-Encoding`: decoding unconditionally lets a literal `=0A` in a
+non-QP body manufacture the same fake line boundary.
+
+### Consequence
+
+Every stage of the demo is now real cryptography: the email's own RSA
+signature, the attestor's Schnorr signature verified in-circuit on Midnight,
+and the one-time nullifier. The honest cost, stated in the UI: in this mode
+the attestor sees the email. That is exactly the disclosure ZK Email removes,
+and the seam (`ProofVerifier`) is unchanged — pinning the blueprint swaps the
+path without touching anything downstream. The pinned DNS record also means
+verification does not depend on DNS availability at claim time; key rotation
+by the issuer requires re-pinning, and the pinned entry names its selector so
+a rotated key fails as "wrong selector" rather than as apparent tampering.
+
+An HTML-only message cannot back a claim: rendering HTML to text is a
+transformation this project does not implement, and matching a marker against
+HTML source would match something no reader ever saw. Extraction fails closed.

@@ -47,18 +47,33 @@ Appendix K. Update this file whenever scope changes.
     circuit called, timing, the nullifier and the claim count. Repeated use of
     the same subject binding within a campaign is linkable. Mitigations
     (relayers, batching, delayed submission) are out of MVP scope.
-12. **The attestor sees the proof and its public outputs.** It never sees the
-    raw email — but "private from the attestor" applies to the message body,
-    not to the fact that a request happened.
+12. **In DKIM-direct mode (D-007) the attestor sees the raw email.** That is
+    the mode the demo runs in, and the UI says so. Verifying the message's own
+    RSA signature requires the message; ZK Email exists precisely to remove
+    this, and the moment a blueprint is pinned the routing verifier sends that
+    blueprint's submissions down the proof path, where the attestor sees only
+    the proof and its public outputs. Either way, nothing but hashes ever
+    reaches the chain.
 
 ## The demo as it stands
 
-13. **Proof verification runs on a fixture.** No ZK Email blueprint has been
-    compiled yet, so the attestor signs from canned evidence when started with
-    `MAILPROOF_ALLOW_FIXTURE_VERIFIER=1`. Everything downstream is real. This
-    is disclosed in three places — a startup banner, `cryptographicVerification:
-    false` on `/health`, and an amber banner in the UI — and the real verifier
-    refuses to run against an un-pinned blueprint rather than pretending.
+13. **ZK Email proof verification is not live.** No blueprint has been
+    compiled on the registry yet. The demo instead verifies real cryptography
+    end to end via DKIM-direct (D-007): the email's own RSA-SHA256 signature
+    against the pinned issuer key. The fixture verifier still exists for tests
+    and requires the explicit `MAILPROOF_ALLOW_FIXTURE_VERIFIER=1` opt-in,
+    disclosed in three places — a startup banner, `cryptographicVerification:
+    false` on `/health`, and an amber banner in the UI.
+13b. **DKIM signatures expire.** Google signs with `x=` seven days out. The
+    real demo email must be re-sent (and the fixture refreshed) if the demo
+    is later than that; `demo:reset` warns when expiry is near.
+13c. **A claim can only be read from a plain-text part.** An HTML-only message
+    is refused: rendering HTML to text is a transformation this project does
+    not implement, and matching a marker against HTML source would match
+    something no reader ever saw. Extraction fails closed (D-007).
+13d. **The browser demo can only redeem a pinned DKIM-direct blueprint.** On a
+    ZK Email blueprint `/api/redeem` refuses outright rather than forwarding
+    the raw message to a verifier whose purpose is never to see one.
 14. **A Gmail-to-self email cannot be used.** Self-addressed mail never leaves
     Google's infrastructure and is therefore never DKIM-signed. Confirmed
     empirically: "delivered in 0 seconds", no `Received` headers, no signature.

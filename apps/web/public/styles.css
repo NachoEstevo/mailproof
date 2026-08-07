@@ -139,6 +139,9 @@ main {
   background: #10161b;
   outline: none;
 }
+/* Frozen while a redemption is in flight — swapping the evidence mid-run
+   would race two on-chain submissions. */
+.dropzone.busy { opacity: 0.45; pointer-events: none; }
 .drop-title { margin: 0 0 4px; font-size: 16px; }
 .drop-sub   { margin: 0 0 14px; color: var(--ink-dim); font-size: 13px; font-family: var(--mono); }
 

@@ -41,6 +41,7 @@
              aria-label="Drop a .eml file, or press Enter to load the sample">
           <p class="drop-title">Drop the cancellation email</p>
           <p class="drop-sub">.eml — stays on this machine</p>
+          <button class="link" id="load-demo-email" type="button" hidden>use the real signed email on this machine</button>
           <button class="link" id="load-sample" type="button">or load the synthetic sample</button>
         </div>
 
@@ -49,8 +50,8 @@
           <h3>DKIM</h3>
           <div id="dkim"></div>
           <p class="note">
-            Structure only. The signature is verified inside the ZK Email
-            circuit, not here.
+            Structure only here. The RSA signature itself is checked when you
+            verify the claim.
           </p>
         </div>
       </section>
@@ -63,6 +64,7 @@
         </div>
 
         <ol class="stages" id="stages">
+          <li data-id="verify"><span class="dot"></span><span class="label">DKIM signature verified (RSA)</span><span class="detail"></span></li>
           <li data-id="attestor"><span class="dot"></span><span class="label">Attestor verifies and signs</span><span class="detail"></span></li>
           <li data-id="submit"><span class="dot"></span><span class="label">Compact verifies on Midnight</span><span class="detail"></span></li>
           <li data-id="confirm"><span class="dot"></span><span class="label">One-time claim consumed</span><span class="detail"></span></li>
@@ -89,7 +91,7 @@
           <li>That it has not been used before</li>
         </ul>
 
-        <h3 class="private">Stays private</h3>
+        <h3 class="private">Never reaches the chain</h3>
         <ul class="disclose private-list">
           <li>The full email</li>
           <li>The recipient address</li>
@@ -97,6 +99,11 @@
           <li>The fare paid</li>
           <li>Everything else in the inbox</li>
         </ul>
+        <p class="note">
+          In DKIM-direct mode the local attestor reads the email to verify its
+          signature. A pinned ZK Email blueprint removes even that — the
+          attestor then sees only the proof.
+        </p>
 
         <div class="onchain" id="onchain"></div>
       </section>

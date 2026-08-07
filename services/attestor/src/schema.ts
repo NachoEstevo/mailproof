@@ -35,7 +35,9 @@ export type AttestRequestBody = z.infer<typeof attestRequestSchema>;
  * Response body.
  *
  * Carries no raw evidence: the unique claim identifier is present only as the
- * derived nullifier, and the email itself never reached this service (§32.12).
+ * derived nullifier. For ZK Email claims the email never reaches this service
+ * at all; for DKIM-direct claims (D-007) it arrives as `proofData`, is
+ * verified, and leaves only as hashes — never in a response or a log.
  */
 export function serialiseSignedClaim(signed: SignedClaim) {
   return {

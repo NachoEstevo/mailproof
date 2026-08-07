@@ -16,6 +16,7 @@ const els = {
   fixtureBanner: $('fixture-banner'),
   dropzone: $('dropzone'),
   loadSample: $('load-sample'),
+  loadDemoEmail: $('load-demo-email'),
   inspection: $('inspection'),
   emlSummary: $('eml-summary'),
   dkim: $('dkim'),
@@ -28,13 +29,33 @@ const els = {
 
 let state = null;
 
+// The message being redeemed. Kept in memory only; sent to the local backend
+// when the user asks to verify, never anywhere else.
+let currentEml = null;
+
+// A redemption takes ~25s on chain. Loading another email mid-flight would
+// re-enable the button, start a second stream over the first one's display,
+// and race two submissions — so evidence input is frozen while one runs.
+let redeeming = false;
+
 // ── Chain state ────────────────────────────────────────────────────────────
 
 async function refreshState() {
+  // A 500 from Fastify is still valid JSON, so `.json()` succeeding proves
+  // nothing about the shape. Check the status and the fields we go on to read
+  // — otherwise a downed indexer surfaces as a TypeError and the chips sit on
+  // "connecting…" forever instead of saying the backend is unreachable.
   try {
-    state = await (await fetch('/api/state')).json();
+    const response = await fetch('/api/state');
+    if (!response.ok) throw new Error(`/api/state returned ${response.status}`);
+    const body = await response.json();
+    if (!body || typeof body !== 'object' || !body.attestor) throw new Error('malformed state');
+    state = body;
   } catch {
+    state = null;
     els.chips.innerHTML = '<span class="chip bad">backend offline</span>';
+    els.fixtureBanner.hidden = true;
+    els.loadDemoEmail.hidden = true;
     return;
   }
 
@@ -45,13 +66,14 @@ async function refreshState() {
       : '<span class="chip warn">attestor: fixture</span>';
 
   els.chips.innerHTML = [
-    `<span class="chip">${state.network}</span>`,
-    `<span class="chip">${state.campaign}</span>`,
+    `<span class="chip">${escapeHtml(state.network)}</span>`,
+    `<span class="chip">${escapeHtml(state.campaign)}</span>`,
     attestorChip,
-    `<span class="chip ok">${state.approvedClaimCount} approved</span>`,
+    `<span class="chip ok">${escapeHtml(state.approvedClaimCount)} approved</span>`,
   ].join('');
 
   els.fixtureBanner.hidden = !state.attestor.online || state.attestor.cryptographicVerification;
+  els.loadDemoEmail.hidden = !state.demoEmailAvailable;
 
   els.onchain.innerHTML = [
     `contract  ${state.contractAddress.slice(0, 20)}…`,
@@ -72,6 +94,8 @@ function escapeHtml(value) {
 // ── Email inspection ───────────────────────────────────────────────────────
 
 async function inspect(text) {
+  if (redeeming) return;
+
   const response = await fetch('/api/inspect', {
     method: 'POST',
     headers: { 'content-type': 'text/plain' },
@@ -80,12 +104,17 @@ async function inspect(text) {
   const report = await response.json();
 
   if (!report.ok) {
+    currentEml = null;
     els.inspection.hidden = false;
     els.emlSummary.innerHTML = `<dt>Error</dt><dd>${escapeHtml(report.error)}</dd>`;
     els.dkim.innerHTML = '';
     els.redeem.disabled = true;
+    // Nothing left to replay; leaving the button up makes a dead click look
+    // like a broken demo.
+    els.replay.hidden = true;
     return;
   }
+  currentEml = text;
 
   // Only shapes and lengths — never the values. This panel gets projected.
   const present = (h) => (h ? `present · ${h.length} chars` : 'absent');
@@ -133,43 +162,64 @@ function setStage(id, cls, detail) {
 }
 
 function resetStages() {
-  for (const id of ['attestor', 'submit', 'confirm']) setStage(id, null, '');
+  for (const id of ['verify', 'attestor', 'submit', 'confirm']) setStage(id, null, '');
   els.result.hidden = true;
   els.result.className = 'result';
 }
 
-function redeem() {
+/**
+ * Read an SSE stream off a fetch response. EventSource cannot POST, and the
+ * email has to travel in the body — so the ~20 lines it saves are hand-rolled
+ * here instead.
+ */
+async function readSse(response, handlers) {
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let boundary;
+    while ((boundary = buffer.indexOf('\n\n')) !== -1) {
+      const frame = buffer.slice(0, boundary);
+      buffer = buffer.slice(boundary + 2);
+      let event = 'message';
+      let data = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event: ')) event = line.slice(7).trim();
+        else if (line.startsWith('data: ')) data += line.slice(6);
+      }
+      if (data && handlers[event]) handlers[event](JSON.parse(data));
+    }
+  }
+}
+
+async function redeem() {
+  if (!currentEml || redeeming) return;
+  redeeming = true;
   resetStages();
   els.redeem.disabled = true;
   els.redeem.textContent = 'Verifying…';
   els.replay.hidden = true;
+  els.dropzone.classList.add('busy');
 
-  const source = new EventSource('/api/redeem');
   let nullifier = null;
+  let settled = false;
 
-  source.addEventListener('stage', (event) => {
-    const data = JSON.parse(event.data);
-    setStage(data.id, data.state === 'done' ? 'done' : 'running', data.detail ?? data.note ?? '');
-    if (data.nullifier) nullifier = data.nullifier;
-  });
-
-  source.addEventListener('done', async (event) => {
-    const data = JSON.parse(event.data);
-    source.close();
+  const finishOk = async () => {
+    settled = true;
     els.result.hidden = false;
     els.result.className = 'result ok';
     els.result.innerHTML =
       `<div class="headline">CLAIM VERIFIED</div>` +
-      `<div class="sub">Compensation unlocked. The verifier never received the email.</div>` +
+      `<div class="sub">The email's own RSA signature was verified, and Midnight recorded only hashes — never the message.</div>` +
       (nullifier ? `<div class="hash">nullifier consumed: ${escapeHtml(nullifier)}</div>` : '');
-    els.redeem.textContent = 'Verify claim';
-    els.replay.hidden = false;
     await refreshState();
-  });
+  };
 
-  source.addEventListener('failed', async (event) => {
-    const data = JSON.parse(event.data);
-    source.close();
+  const finishFailed = async (data) => {
+    settled = true;
     for (const li of els.stages.querySelectorAll('li:not(.done)')) {
       li.classList.remove('running');
       li.classList.add('failed');
@@ -179,17 +229,41 @@ function redeem() {
     els.result.innerHTML =
       `<div class="headline">${data.code === 'CLAIM_ALREADY_USED' ? 'ALREADY CLAIMED' : 'REJECTED'}</div>` +
       `<div class="sub">${escapeHtml(data.message)}</div>`;
+    await refreshState();
+  };
+
+  try {
+    const response = await fetch('/api/redeem', {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: currentEml,
+    });
+    if (!response.ok || !response.body) throw new Error(`server returned ${response.status}`);
+    await readSse(response, {
+      stage: (data) => {
+        setStage(data.id, data.state === 'done' ? 'done' : 'running', data.detail ?? data.note ?? '');
+        if (data.nullifier) nullifier = data.nullifier;
+      },
+      done: finishOk,
+      failed: finishFailed,
+    });
+    // A stream that ends without a verdict is a failure too — silently
+    // leaving the stage dots pulsing reads as "still working" forever.
+    if (!settled) {
+      await finishFailed({
+        code: 'ERROR',
+        message: 'The connection closed before the claim was resolved. Check the web server.',
+      });
+    }
+  } catch (error) {
+    await finishFailed({ code: 'ERROR', message: error?.message ?? 'The request failed.' });
+  } finally {
+    redeeming = false;
     els.redeem.disabled = false;
     els.redeem.textContent = 'Verify claim';
     els.replay.hidden = false;
-    await refreshState();
-  });
-
-  source.onerror = () => {
-    source.close();
-    els.redeem.disabled = false;
-    els.redeem.textContent = 'Verify claim';
-  };
+    els.dropzone.classList.remove('busy');
+  }
 }
 
 // ── Wiring ─────────────────────────────────────────────────────────────────
@@ -211,6 +285,7 @@ els.dropzone.addEventListener('drop', async (e) => {
 });
 
 els.dropzone.addEventListener('click', () => {
+  if (redeeming) return;
   const input = document.createElement('input');
   input.type = 'file';
   input.accept = '.eml,message/rfc822,text/plain';
@@ -232,7 +307,15 @@ els.loadSample.addEventListener('click', async (e) => {
   await inspect(await (await fetch('/api/sample-eml')).text());
 });
 
+els.loadDemoEmail.addEventListener('click', async (e) => {
+  e.stopPropagation();
+  const response = await fetch('/api/demo-eml');
+  if (response.ok) await inspect(await response.text());
+});
+
 els.redeem.addEventListener('click', redeem);
 els.replay.addEventListener('click', redeem);
 
+// Bare call at module scope: an unhandled rejection here would leave the page
+// on "connecting…" with no explanation, so refreshState swallows its own.
 refreshState();
