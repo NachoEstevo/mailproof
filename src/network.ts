@@ -164,7 +164,7 @@ export interface ResolveOptions {
   cwd?: string;
 }
 
-export type ResolveSource = 'flag' | 'state' | 'default';
+export type ResolveSource = 'flag' | 'env' | 'state' | 'default';
 
 export interface ResolveResult {
   network: NetworkId;
@@ -198,9 +198,24 @@ export function resolveNetwork(opts: ResolveOptions = {}): ResolveResult {
   let network: NetworkId;
   let source: ResolveSource;
 
+  // Flag, then environment, then the state file, then the default.
+  //
+  // The environment step is what a container needs: it has no state file, so
+  // without it a server told MIDNIGHT_NETWORK=preview silently fell back to
+  // `undeployed` and spent its life dialling a devnet indexer on localhost
+  // that was never going to answer.
+  const fromEnv = env.MIDNIGHT_NETWORK?.trim();
   if (flag) {
     network = flag;
     source = 'flag';
+  } else if (fromEnv) {
+    if (!isNetworkId(fromEnv)) {
+      throw new Error(
+        `MIDNIGHT_NETWORK: unknown network "${fromEnv}". Supported: ${NETWORK_IDS.join(', ')}.`,
+      );
+    }
+    network = fromEnv;
+    source = 'env';
   } else {
     const state = loadState({ cwd });
     if (state) {
