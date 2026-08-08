@@ -8,7 +8,7 @@
  */
 import { generateKeyPairSync } from 'node:crypto';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { issueChallenge } from '../../../packages/shared/challenge.js';
 import { dkimSign, dnsRecordForPublicKey } from '../../../packages/shared/dkim-sign.js';
@@ -17,6 +17,15 @@ import { ATTESTOR_ERROR, AttestorError } from '../src/errors.js';
 import { SelfAttestationProofVerifier } from '../src/self-attestation-verifier.js';
 
 const NOW = new Date('2026-08-08T12:00:00Z');
+
+beforeAll(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(NOW);
+});
+
+afterAll(() => {
+  vi.useRealTimers();
+});
 const CHALLENGE_SECRET = new Uint8Array(32).fill(3);
 const BLINDING_KEY = new Uint8Array(32).fill(9);
 
@@ -90,6 +99,9 @@ describe('what it reports', () => {
     // 32 bytes of hex, and nothing recognisable from the address.
     expect(evidence.uniqueClaimId).toMatch(/^0x[0-9a-f]{64}$/);
     expect(evidence.uniqueClaimId).not.toContain('ana');
+    expect(evidence.opaqueIdentityHandle).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(evidence.opaqueIdentityHandle).not.toBe(evidence.uniqueClaimId);
+    expect(evidence.opaqueIdentityKeyId).toBe(verifier().blindingKeyId);
   });
 
   it('gives one person one id however they spell their address', async () => {
@@ -105,6 +117,28 @@ describe('what it reports', () => {
     const ana = await verifier().verify(submit(selfSent('ana@udesa.edu.ar')), policy());
     const bruno = await verifier().verify(submit(selfSent('bruno@udesa.edu.ar')), policy());
     expect(ana.uniqueClaimId).not.toBe(bruno.uniqueClaimId);
+    expect(ana.opaqueIdentityHandle).not.toBe(bruno.opaqueIdentityHandle);
+  });
+
+  it('scopes the account handle to the relying application', async () => {
+    const otherAudience = new SelfAttestationProofVerifier({
+      challengeSecret: CHALLENGE_SECRET,
+      audience: 'another-app',
+      blindingKey: BLINDING_KEY,
+      maxAgeMs: 24 * 60 * 60 * 1000,
+    });
+    const a = await verifier().verify(submit(selfSent()), policy());
+    const otherCode = issueChallenge({
+      secret: CHALLENGE_SECRET,
+      audience: 'another-app',
+      now: NOW,
+    }).code;
+    const b = await otherAudience.verify(
+      submit(selfSent('Ana <ana@udesa.edu.ar>', `Hola\r\n\r\n${otherCode}\r\n`)),
+      policy(),
+    );
+    expect(a.uniqueClaimId).toBe(b.uniqueClaimId);
+    expect(a.opaqueIdentityHandle).not.toBe(b.opaqueIdentityHandle);
   });
 
   it('renames everyone when the blinding key changes', async () => {
@@ -146,11 +180,19 @@ describe('what it refuses', () => {
     expect(await codeOf(selfSent().replace('Hola', 'Otro'))).toBe(ATTESTOR_ERROR.PROOF_INVALID);
   });
 
-  it('a blueprint with no pinned key verifies nothing', async () => {
+  it('a blueprint with no pinned key falls back to the signer published one', async () => {
+    // Unpinned means "resolve the key the signer published", which is what
+    // every mail server does. The fixture's domain publishes nothing real, so
+    // the lookup fails and the message is refused — the point being that the
+    // refusal now comes from DNS having no key, not from the blueprint
+    // refusing to look.
     const { dkim, ...withoutKey } = policy();
-    expect(await codeOf(selfSent(), withoutKey as never)).toBe(
-      ATTESTOR_ERROR.BLUEPRINT_NOT_ALLOWED,
-    );
+    const code = await codeOf(selfSent(), withoutKey as never);
+    expect(code).not.toBe(ATTESTOR_ERROR.BLUEPRINT_NOT_ALLOWED);
+    // Either outcome is the DNS path having run: no key published, or the
+    // resolver unreachable. Which one depends on the network the suite runs
+    // on, and pinning it to one would make this fail offline for no reason.
+    expect([ATTESTOR_ERROR.PROOF_INVALID, ATTESTOR_ERROR.INTERNAL_ERROR]).toContain(code);
   });
 
   it('declares itself cryptographic, because it is', () => {

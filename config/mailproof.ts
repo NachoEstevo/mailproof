@@ -142,7 +142,12 @@ export function loadConfig(
     claimType,
     campaignId: campaignIdHash(campaign),
     blueprintIdHash: blueprintIdHash(blueprintSlug),
-    issuerDomainHash: issuerDomainHash(issuerDomain),
+    // `*` is the wildcard the contract reads as "any institution": it pins the
+    // zero hash and delegates the domain to the attestor's allowlist. Written
+    // as a domain nobody can own rather than as an empty string, so an unset
+    // variable can never be mistaken for a deliberate opening.
+    issuerDomainHash:
+      issuerDomain === '*' ? new Uint8Array(32) : issuerDomainHash(issuerDomain),
     attestorKeyId: env.MAILPROOF_ATTESTOR_KEY_ID?.trim() || DEFAULTS.attestorKeyId,
     attestorUrl: env.MAILPROOF_ATTESTOR_URL?.trim() || DEFAULTS.attestorUrl,
   };

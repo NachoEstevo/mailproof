@@ -18,6 +18,7 @@ import {
   uniqueClaimIdHash,
   type ClaimAttestationV1,
 } from '../../../packages/shared/claim.js';
+import { isAcademicDomain } from '../../../packages/shared/academic.js';
 import { CLAIM_TYPE, CLAIM_VERSION } from '../../../packages/shared/constants.js';
 import { publicKeyFromSecret, sign, type SchnorrSignature } from '../../../packages/shared/schnorr.js';
 import type { JubjubPoint } from '@midnight-ntwrk/compact-runtime';
@@ -47,6 +48,9 @@ export interface SignedClaim {
   readonly signature: SchnorrSignature;
   readonly attestorPublicKey: JubjubPoint;
   readonly attestorKeyId: string;
+  /** Present only for verifiers that produce a keyed, opaque account handle. */
+  readonly opaqueIdentityHandle?: string;
+  readonly opaqueIdentityKeyId?: string;
 }
 
 export async function attest(request: AttestRequest, deps: AttestDeps): Promise<SignedClaim> {
@@ -75,7 +79,17 @@ export async function attest(request: AttestRequest, deps: AttestDeps): Promise<
 
   // 4. The signature proves *a* domain signed *a* message. Confirm it is the
   //    domain this blueprint is pinned to.
-  if (evidence.issuerDomain.trim().toLowerCase() !== policy.issuerDomain.trim().toLowerCase()) {
+  //    A campaign pinned to `*` serves every institution, so there is nothing
+  //    to compare against — but "every institution" is not "every domain", or
+  //    a gmail.com mailbox earns a student tier. The suffix rules stand in for
+  //    the registry that does not exist.
+  if (policy.issuerDomain === '*') {
+    if (!isAcademicDomain(evidence.issuerDomain)) {
+      throw new AttestorError(ATTESTOR_ERROR.SENDER_NOT_ALLOWED);
+    }
+  } else if (
+    evidence.issuerDomain.trim().toLowerCase() !== policy.issuerDomain.trim().toLowerCase()
+  ) {
     throw new AttestorError(ATTESTOR_ERROR.SENDER_NOT_ALLOWED);
   }
 
@@ -113,7 +127,13 @@ export async function attest(request: AttestRequest, deps: AttestDeps): Promise<
     version: CLAIM_VERSION,
     claimType: CLAIM_TYPE[policy.claimType],
     blueprintIdHash: pinnedBlueprintHash,
-    issuerDomainHash: issuerDomainHash(policy.issuerDomain),
+    // A `*` campaign signs the domain it actually saw, not the wildcard: the
+    // contract's zero hash accepts any value here, so recording the real one
+    // costs nothing and keeps the claim self-describing. A pinned campaign
+    // signs the pin, which the check above proved the evidence matches.
+    issuerDomainHash: issuerDomainHash(
+      policy.issuerDomain === '*' ? evidence.issuerDomain.trim().toLowerCase() : policy.issuerDomain,
+    ),
     campaignId,
     subjectBindingHash: request.subjectBindingHash,
     claimNullifier,
@@ -132,5 +152,11 @@ export async function attest(request: AttestRequest, deps: AttestDeps): Promise<
     signature,
     attestorPublicKey: publicKeyFromSecret(deps.secretKey),
     attestorKeyId: deps.attestorKeyId,
+    ...(evidence.opaqueIdentityHandle !== undefined
+      ? { opaqueIdentityHandle: evidence.opaqueIdentityHandle }
+      : {}),
+    ...(evidence.opaqueIdentityKeyId !== undefined
+      ? { opaqueIdentityKeyId: evidence.opaqueIdentityKeyId }
+      : {}),
   };
 }

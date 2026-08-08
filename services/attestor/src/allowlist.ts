@@ -83,8 +83,16 @@ const blueprintSchema = z
       })) {
         if (value !== undefined) complain(`${name} means nothing on a domain-membership entry`);
       }
-      if (!entry.dkim) {
-        complain('domain-membership needs a pinned dkim.dnsRecord to verify against');
+      // A pinned key is stronger and stays the default for a single-
+      // institution campaign. Omitting it is the deliberate opposite: a
+      // campaign open to every university, where the signer's key is resolved
+      // from DNS the way every mail server resolves it. Only `*` may do that,
+      // so an entry cannot lose its pin by accident.
+      if (!entry.dkim && entry.issuerDomain !== '*') {
+        complain(
+          'domain-membership needs a pinned dkim.dnsRecord, or issuerDomain "*" ' +
+            'to resolve each signer key from DNS',
+        );
       }
       return;
     }
