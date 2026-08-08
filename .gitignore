@@ -50,3 +50,7 @@ Thumbs.db
 
 # The landing hero as exported; the committed assets are the derived webp/jpg.
 /ChatGPT Image*.png
+
+# Railway CLI link state. Only project/service ids, but this repo is public
+# and those ids are the first half of an attack on the deployment.
+.railway/
