@@ -188,7 +188,10 @@ ${body}
           document.execCommand('copy');
           area.remove();
         }
-        const words = source.split(/\s+/).length;
+        // Four backslashes: two are eaten writing this file, two more by the
+        // template literal that emits it. Written with one, the browser gets
+        // /s+/ and counts the letter s.
+        const words = source.trim().split(/\\s+/).length;
         label.textContent = \`Copied \${words.toLocaleString()} words\`;
         copyButton.classList.add('done');
         setTimeout(() => {
