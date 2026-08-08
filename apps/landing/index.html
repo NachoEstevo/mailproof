@@ -61,45 +61,15 @@
     <!-- ── The problem ──────────────────────────────────────────────────── -->
 
     <section id="problem">
-      <div class="page">
+      <div class="page prose">
         <p class="eyebrow">The problem</p>
-        <h2 class="section-title">Two things every site wants, and today they fight.</h2>
-        <div class="prose">
-          <p class="lede">
-            To know you are a student, a site has to see your student address —
-            which it then keeps, mails, and leaks when it is breached. And to
-            stop one person taking the free tier fifty times, it has to
-            recognise the person.
-          </p>
-          <p>
-            A unique-email column does not do the second.
-            <code>ana+1@gmail.com</code>, <code>ana+2@gmail.com</code> and
-            <code>a.n.a@gmail.com</code> are one inbox and three rows. Fifteen
-            characters of local part give sixteen thousand spellings of the same
-            mailbox, all of which deliver.
-          </p>
-        </div>
-
-        <div class="ledger">
-          <div class="leaks">
-            <h3>What a site holds today</h3>
-            <ul>
-              <li>Your full address, forever</li>
-              <li>Your name, usually</li>
-              <li>A row in the next breach dump</li>
-              <li>No way to tell you from your other four accounts</li>
-            </ul>
-          </div>
-          <div class="keeps">
-            <h3>What it holds with MailProof</h3>
-            <ul>
-              <li>That the domain is educational</li>
-              <li>That this is the first claim from that mailbox</li>
-              <li>An opaque handle it cannot reverse</li>
-              <li>Nothing else</li>
-            </ul>
-          </div>
-        </div>
+        <h2 class="section-title">To know you are a student, a site makes you hand over your address.</h2>
+        <p class="lede">
+          Then it keeps it, mails it, and leaks it when it is breached. And it
+          still cannot stop one person taking the free tier fifty times —
+          <code>ana+1@gmail.com</code> and <code>a.n.a@gmail.com</code> are one
+          inbox and two rows.
+        </p>
       </div>
     </section>
 
@@ -108,71 +78,30 @@
     <section id="how" class="band">
       <div class="page">
         <p class="eyebrow">How it works</p>
-        <h2 class="section-title">Three steps, and the third one is the interesting one.</h2>
-        <div class="prose">
-          <p class="lede">
-            Nothing here asks you to trust us about your inbox. The proof is the
-            sending domain's own signature, which every mail provider already
-            attaches to everything it sends.
-          </p>
-        </div>
+        <h2 class="section-title">Three steps.</h2>
 
         <div class="steps">
           <div class="step">
             <span class="n">01</span>
             <h3>The site shows a code</h3>
-            <p>
-              Something like <code>MP-4KQ7-9XW2-3TFA</code>. It expires in
-              minutes and only authenticates for that one site.
-            </p>
+            <p>It expires in minutes and works on that site only.</p>
           </div>
           <div class="step">
             <span class="n">02</span>
             <h3>You send yourself an email</h3>
             <p>
-              From the address you want to prove, with the code in it. One click
-              with the extension, or a file upload in any browser.
+              From the address you want to prove. Your provider signs it —
+              that signature is the proof, and only you can produce it.
             </p>
           </div>
           <div class="step">
             <span class="n">03</span>
-            <h3>The claim is spent, once <svg class="midnight-mark" viewBox="0 0 100 100" fill="none" aria-hidden="true"><circle cx="50" cy="50" r="36" stroke="currentColor" stroke-width="11"/><rect x="44.5" y="26" width="11" height="11" fill="currentColor"/><rect x="44.5" y="44.5" width="11" height="11" fill="currentColor"/><rect x="44.5" y="63" width="11" height="11" fill="currentColor"/></svg></h3>
+            <h3>The claim is spent, once</h3>
             <p>
               Your mailbox becomes an unguessable value on Midnight. The site
-              sees the domain and a first-time flag — never the address.
+              sees the domain and a first-time flag. Never the address.
             </p>
           </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Why sending, not receiving ───────────────────────────────────── -->
-
-    <section id="why-sending">
-      <div class="page split">
-        <div>
-          <p class="eyebrow">The detail that matters</p>
-          <h2 class="section-title">Why you send the email, instead of us sending it.</h2>
-        </div>
-        <div>
-          <p>
-            The obvious design is to email you and have you click a link. That
-            proves nothing useful here, because the site already knew the
-            address it wrote to.
-          </p>
-          <p>
-            The next idea — take an email somebody sent <em>to</em> you and read
-            the recipient — is worse. Whoever sent that message chose the
-            recipient, and the signature covers what they chose. Anyone able to
-            sign for a domain could invent any address inside it and burn a
-            colleague's slot before they ever arrived.
-          </p>
-          <p>
-            A message you <em>sent</em> is different. A provider will not sign a
-            message claiming to come from a mailbox the sender does not control.
-            That is what DKIM alignment is for, and it is the whole basis of
-            this.
-          </p>
         </div>
       </div>
     </section>
@@ -183,31 +112,8 @@
       <div class="page">
         <p class="eyebrow">The SDK</p>
         <h2 class="section-title">Two calls in your own backend.</h2>
-        <div class="prose">
-          <p class="lede">
-            An SDK is a small library you install into your own code so you do
-            not have to build a thing yourself. This one runs on your server,
-            mints the codes, reads the message, applies your rules, and hands
-            back a decision.
-          </p>
-          <p>
-            It never decides what to grant. That is yours.
-          </p>
-        </div>
 
-<pre><code>const mailproof = createMailProof({
-  audience: 'your-site',
-  challengeSecret: env.MAILPROOF_CHALLENGE_SECRET,
-  blindingKey:     env.MAILPROOF_BLINDING_KEY,
-  campaign: '2026-S1',
-
-  tiers: [
-    { id: 'STUDENT',   suffixes: ['.edu', '.edu.ar', '.ac.uk'] },
-    { id: 'CORPORATE', notFreeProvider: true },
-  ],
-  domainKeys: [{ domain: 'udesa.edu.ar', dnsRecord: 'v=DKIM1; k=rsa; p=…' }],
-  redemption: httpRedemptionClient({ baseUrl: 'http://127.0.0.1:3000' }),
-})
+<pre><code>const { code } = mailproof.startVerification()
 
 const result = await mailproof.verify(eml)
 
@@ -215,124 +121,19 @@ if (result.ok &amp;&amp; result.tier === 'STUDENT' &amp;&amp; !result.alreadyCla
   await db.user.update({ where: { id }, data: { plan: 'PRO' } })
 }</code></pre>
 
-        <div class="prose">
-          <p>
-            <code>alreadyClaimed</code> is a field, not an error — it is the
-            question you were actually asking. And a domain that matches no rule
-            gets no tier, never a default one.
-          </p>
-          <p>
-            <a class="btn ghost" href="docs.html#quickstart">Full quickstart →</a>
-          </p>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Uses ─────────────────────────────────────────────────────────── -->
-
-    <section id="uses" class="band">
-      <div class="page">
-        <p class="eyebrow">Use cases</p>
-        <h2 class="section-title">One mechanism, because the domain does the talking.</h2>
-        <div class="prose">
-          <p class="lede">
-            A proof always says the same thing — "controls a mailbox at D". What
-            it is worth depends entirely on how hard a mailbox at D is to get.
-          </p>
-        </div>
-
-        <div class="cards">
-          <div class="card">
-            <span class="who">Student pricing</span>
-            <h3>A discount that cannot be shared</h3>
-            <p>
-              A <code>.edu.ar</code> is issued only to recognised institutions,
-              so the registrar did the vetting. One benefit per mailbox stops
-              the code circulating.
-            </p>
-          </div>
-          <div class="card">
-            <span class="who">Work email required</span>
-            <h3>A B2B trial without the inbox</h3>
-            <p>
-              Confirm the person works somewhere real without collecting a
-              corporate address that becomes a sales list.
-            </p>
-          </div>
-          <div class="card">
-            <span class="who">Free tier abuse</span>
-            <h3>One free account per person</h3>
-            <p>
-              The thing a unique-email column has never been able to enforce,
-              enforced — without holding the person.
-            </p>
-          </div>
-          <div class="card">
-            <span class="who">Communities</span>
-            <h3>A room only insiders can enter</h3>
-            <p>
-              Everyone in it is verifiably from the same institution, and nobody
-              in it knows who anybody else is.
-            </p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Honesty ──────────────────────────────────────────────────────── -->
-
-    <section id="honest">
-      <div class="page">
-        <p class="eyebrow">What we will not pretend</p>
-        <h2 class="section-title">The limits, up front.</h2>
-        <div class="prose">
-          <p class="lede">
-            A privacy tool that hides its own trust assumptions is not a privacy
-            tool. Every successful verification returns a
-            <code>trust</code> object saying who read what.
-          </p>
-        </div>
-
-        <div class="caveats prose">
-          <h3>Read this before you rely on it</h3>
-          <ul>
-            <li>
-              <strong>Something reads the email.</strong> Today that is the
-              attestor, which checks the message's own RSA signature. It is not
-              you and it is not the chain — but it is not nobody.
-            </li>
-            <li>
-              <strong>The attestor is trusted.</strong> If it signs a false
-              claim, the contract accepts it. Run your own.
-            </li>
-            <li>
-              <strong>"Not a free provider" is a friction tax</strong>, not an
-              anti-sybil control. A one-dollar domain with catch-all mail
-              defeats it. Gate anything that matters on an explicit list.
-            </li>
-            <li>
-              <strong>Alumni addresses outlive graduation.</strong> Campaigns
-              are per period so a benefit has to be re-proven, but the mailbox
-              itself may never expire.
-            </li>
-          </ul>
-        </div>
+        <p class="prose">
+          You choose which domains earn which tier, and what to grant. The SDK
+          never sees a benefit and you never see an address.
+          <a href="docs.html#quickstart">Read the quickstart&nbsp;→</a>
+        </p>
       </div>
     </section>
 
     <!-- ── Close ────────────────────────────────────────────────────────── -->
 
-    <section id="start" class="band">
-      <div class="page" style="text-align: center">
-        <a class="built-on" href="https://midnight.network">Built on Midnight</a>
-        <h2 class="section-title" style="max-width: 18ch; margin-inline: auto">
-          Everything is open. Run all of it yourself.
-        </h2>
-        <p class="lede" style="max-width: 52ch; margin: 0 auto 32px">
-          The contract, the attestor, the daemon, the SDK and the extension are
-          in one repository, with the decisions and the known limitations
-          written down beside them.
-        </p>
+    <section id="start" class="band close">
+      <div class="page">
+        <h2 class="section-title">Everything is open. Run all of it yourself.</h2>
         <div class="hero-cta">
           <a class="btn big" href="https://github.com/NachoEstevo/mailproof">
             github.com/NachoEstevo/mailproof
