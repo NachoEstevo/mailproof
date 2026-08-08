@@ -147,6 +147,17 @@ button.primary {
 button.primary:disabled { opacity: 0.3; cursor: not-allowed; }
 button.primary:not(:disabled):hover { background: #fff; }
 
+button.secondary {
+  width: 100%;
+  margin-top: 12px; padding: 10px 14px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: transparent; color: var(--ink-dim);
+  font: inherit; cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+button.secondary:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-dim); }
+button.secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+
 button.link {
   /* Block, not inline: side by side they run into the panel edge at 400px. */
   display: block;

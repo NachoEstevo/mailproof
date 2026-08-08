@@ -26,6 +26,7 @@ const els = {
   hint: $('hint'),
   stages: $('stages'),
   result: $('result'),
+  newRound: $('new-round'),
   fallback: $('fallback'),
   dropzone: $('dropzone'),
   file: $('file'),
@@ -180,6 +181,8 @@ async function verify() {
           data.message,
           nullifier ? `nullifier ${nullifier}` : '',
         );
+        // Spent in this campaign — a new round is the way to run it again.
+        if (data.code === 'CLAIM_ALREADY_USED') els.newRound.hidden = false;
       },
       done: (data) => {
         showResult(
@@ -189,6 +192,7 @@ async function verify() {
           [nullifier && `nullifier ${nullifier}`, txId && `tx ${txId}`].filter(Boolean).join('\n'),
         );
         renderDisclosure();
+        els.newRound.hidden = false;
         // Let the room watch the on-chain counter advance, rather than
         // leaving the chip on the figure it had when the panel opened.
         void refreshState();
@@ -201,6 +205,59 @@ async function verify() {
   } finally {
     busy = false;
     els.dropzone?.classList.remove('busy');
+    await detectSource();
+  }
+}
+
+// ─── Rounds ──────────────────────────────────────────────────────────────────
+
+/**
+ * Open a new round: a fresh campaign, a fresh contract, an empty nullifier
+ * set.
+ *
+ * A claim being spendable once is the property this whole thing exists to
+ * show, so the answer to "I want to run it again" is a new campaign, not a
+ * reusable claim. The old contract keeps its spent nullifier forever.
+ */
+async function newRound() {
+  if (busy) return;
+  busy = true;
+  els.newRound.disabled = true;
+  els.verify.disabled = true;
+  els.newRound.textContent = 'Opening a new round…';
+  resetStages();
+  els.result.hidden = true;
+  els.disclosureSection.hidden = true;
+
+  try {
+    const response = await fetch(`${DAEMON}/api/new-round`, { method: 'POST' });
+    await readSse(response, {
+      // Deploying takes ~25s. The stage list belongs to the redemption, so
+      // progress goes where the user is already reading.
+      stage: (data) => {
+        if (data.state !== 'running') return;
+        say(data.id === 'deploy' ? 'Deploying a fresh contract…' : `New campaign ${data.detail}…`);
+      },
+      failed: (data) => showResult('rejected', 'COULD NOT OPEN A ROUND', data.message, ''),
+      // In the result panel, not the hint: the hint tracks whichever message
+      // Gmail has open and is overwritten within the second.
+      done: async (data) => {
+        els.newRound.hidden = true;
+        await refreshState();
+        showResult(
+          'ok',
+          'NEW ROUND OPEN',
+          `Campaign ${data.campaign} — the same email counts again.`,
+          `contract ${data.contractAddress}`,
+        );
+      },
+    });
+  } catch (error) {
+    showResult('rejected', 'COULD NOT OPEN A ROUND', daemonHint(error), '');
+  } finally {
+    busy = false;
+    els.newRound.disabled = false;
+    els.newRound.textContent = 'Open a new round';
     await detectSource();
   }
 }
@@ -305,6 +362,8 @@ async function refreshState() {
 
   // Gitignored evidence that only exists on the machine that received it.
   els.loadDemoEmail.hidden = !state.demoEmailAvailable;
+  // Survives reopening the panel on a round whose claim is already spent.
+  if (state.approvedClaimCount > 0) els.newRound.hidden = false;
 
   els.chips.replaceChildren(
     chip(state.network, 'ok'),
@@ -368,6 +427,7 @@ els.loadDemoEmail.addEventListener('click', async () => {
 // ─── Wiring ──────────────────────────────────────────────────────────────────
 
 els.verify.addEventListener('click', verify);
+els.newRound.addEventListener('click', newRound);
 
 /**
  * Follow whatever the reader is looking at.

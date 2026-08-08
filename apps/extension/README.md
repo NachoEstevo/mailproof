@@ -55,6 +55,20 @@ A drop zone and a *use this machine's demo email* link exist, but they stay
 hidden until reading from Gmail has actually failed. If you can see them,
 something went wrong — that is the signal, not the normal state.
 
+## Running it more than once
+
+Press **Verify this email** a second time and you get **ALREADY CLAIMED**.
+That is the point: the claim is spendable once, and the chain remembers.
+
+**Open a new round** appears once the current round has been spent. A round
+is a campaign — a fresh contract with an empty nullifier set — so the same
+email counts again, which is what a real deployment opens for a new
+promotion. It takes about 25 seconds and there is no limit.
+
+Nothing is loosened by it: the campaign is part of the nullifier, so a new
+round is a genuinely different claim, and the old contract keeps its spent
+one forever. See `docs/DECISIONS.md` D-009.
+
 ## What can break
 
 **Gmail's markup is not a contract.** Locating the open message and reading

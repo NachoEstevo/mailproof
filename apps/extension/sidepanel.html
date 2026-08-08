@@ -31,6 +31,14 @@
       </ol>
 
       <div class="result" id="result" hidden></div>
+
+      <!--
+        A claim is one-time within a campaign — that is the property, not a
+        limitation. A round is a new campaign: a fresh contract with an empty
+        nullifier set, which is what a real deployment opens for a new
+        promotion. Offered only once the current round has been spent.
+      -->
+      <button class="secondary" id="new-round" hidden>Open a new round</button>
     </section>
 
     <!--
