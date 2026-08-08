@@ -20,34 +20,35 @@
     <p class="notice" id="notice" hidden></p>
 
     <section>
-      <h2>1 · Evidence</h2>
-      <button class="primary" id="capture" disabled>Read the open email</button>
-      <p class="hint" id="source-hint">Looking for an open message…</p>
+      <button class="primary" id="verify" disabled>Verify this email</button>
+      <p class="hint" id="hint">Looking for an open message…</p>
 
-      <div class="dropzone" id="dropzone" tabindex="0" role="button">
-        Drop an <code>.eml</code>, or click to choose one
-      </div>
-      <input type="file" id="file" accept=".eml,message/rfc822,text/plain" hidden />
-      <button class="link" id="load-sample">Use the synthetic sample instead</button>
-      <button class="link" id="load-demo-email" hidden>Use this machine's demo email</button>
-
-      <dl class="kv" id="evidence" hidden></dl>
-    </section>
-
-    <section>
-      <h2>2 · Redemption</h2>
       <ol class="stages" id="stages">
         <li data-stage="verify"><span class="dot"></span><span class="label">DKIM signature</span></li>
         <li data-stage="attestor"><span class="dot"></span><span class="label">Attestor signs the claim</span></li>
         <li data-stage="submit"><span class="dot"></span><span class="label">Redeemed on Midnight</span></li>
         <li data-stage="confirm"><span class="dot"></span><span class="label">Confirmed on chain</span></li>
       </ol>
-      <button class="primary" id="redeem" disabled>Redeem this claim</button>
+
       <div class="result" id="result" hidden></div>
     </section>
 
+    <!--
+      Only ever shown after reading the open message has failed. Gmail's
+      markup is not a contract, and a demo needs a way through that does not
+      depend on it — but nobody should have to look at it otherwise.
+    -->
+    <section id="fallback" hidden>
+      <h2>Could not read it from Gmail</h2>
+      <div class="dropzone" id="dropzone" tabindex="0" role="button">
+        Drop the <code>.eml</code>, or click to choose it
+      </div>
+      <input type="file" id="file" accept=".eml,message/rfc822,text/plain" hidden />
+      <button class="link" id="load-demo-email" hidden>Use this machine's demo email</button>
+    </section>
+
     <section id="disclosure-section" hidden>
-      <h2>3 · What the chain learned</h2>
+      <h2>What the chain learned</h2>
       <h3 class="revealed">Revealed</h3>
       <ul class="disclose revealed-list" id="revealed"></ul>
       <h3 class="private">Never revealed</h3>

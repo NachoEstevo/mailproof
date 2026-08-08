@@ -1,11 +1,16 @@
 /**
  * Side panel.
  *
- * The panel is a client of the MailProof daemon on loopback — it holds no
- * keys, runs no proofs and talks to no remote host. The one network rule that
- * matters: the raw message goes to DAEMON and nowhere else. Everything the
- * panel renders from Gmail or from an error is written with textContent, so
- * a hostile subject line stays a subject line.
+ * One action: read the message open in Gmail and redeem it. Reading and
+ * redeeming are not two steps the user has to sequence — nobody opens an
+ * email in order to load it somewhere, they open it because they want the
+ * claim. The drop zone exists, but it stays out of sight until reading from
+ * Gmail has actually failed.
+ *
+ * The panel holds no keys, runs no proofs and talks to no remote host. The
+ * one network rule that matters: the raw message goes to DAEMON and nowhere
+ * else. Anything rendered from Gmail or from an error is written with
+ * textContent, so a hostile subject line stays a subject line.
  */
 
 import { readSse } from './sse.js';
@@ -17,16 +22,14 @@ const $ = (id) => document.getElementById(id);
 const els = {
   chips: $('chips'),
   notice: $('notice'),
-  capture: $('capture'),
-  sourceHint: $('source-hint'),
+  verify: $('verify'),
+  hint: $('hint'),
+  stages: $('stages'),
+  result: $('result'),
+  fallback: $('fallback'),
   dropzone: $('dropzone'),
   file: $('file'),
-  loadSample: $('load-sample'),
   loadDemoEmail: $('load-demo-email'),
-  evidence: $('evidence'),
-  stages: $('stages'),
-  redeem: $('redeem'),
-  result: $('result'),
   disclosureSection: $('disclosure-section'),
   revealed: $('revealed'),
   private: $('private'),
@@ -34,9 +37,14 @@ const els = {
 };
 
 let state = null;
-/** The message under consideration. In memory only. */
-let currentEml = null;
-let redeeming = false;
+/** Set only when Gmail could not be read and a file was supplied instead. */
+let droppedEml = null;
+let busy = false;
+
+const say = (text, tone = '') => {
+  els.hint.className = tone ? `hint ${tone}` : 'hint';
+  els.hint.textContent = text;
+};
 
 // ─── Chrome plumbing ─────────────────────────────────────────────────────────
 
@@ -50,23 +58,27 @@ const isGmail = (tab) => Boolean(tab?.url?.startsWith('https://mail.google.com/'
 /**
  * Gmail's per-session request key, read from the page's own globals.
  *
- * Content scripts run in an isolated world and cannot see page variables, so
- * this has to be a MAIN-world injection. Older builds only expose it in link
- * hrefs, hence the second attempt.
+ * Only the fallback URL needs it — "Download Original" does not — so failing
+ * to find it is not fatal. Content scripts run isolated and cannot see page
+ * variables, hence the MAIN-world injection.
  */
 async function gmailSessionKey(tabId) {
-  const [injected] = await chrome.scripting.executeScript({
-    target: { tabId },
-    world: 'MAIN',
-    func: () => {
-      const fromGlobals = Array.isArray(globalThis.GLOBALS) ? globalThis.GLOBALS[9] : null;
-      if (typeof fromGlobals === 'string' && fromGlobals.length > 0) return fromGlobals;
-      const node = document.querySelector('a[href*="ik="], img[src*="ik="]');
-      const url = node?.getAttribute('href') ?? node?.getAttribute('src') ?? '';
-      return /[?&]ik=([^&]+)/.exec(url)?.[1] ?? null;
-    },
-  });
-  return injected?.result ?? null;
+  try {
+    const [injected] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: () => {
+        const fromGlobals = Array.isArray(globalThis.GLOBALS) ? globalThis.GLOBALS[9] : null;
+        if (typeof fromGlobals === 'string' && fromGlobals.length > 0) return fromGlobals;
+        const node = document.querySelector('a[href*="ik="], img[src*="ik="]');
+        const url = node?.getAttribute('href') ?? node?.getAttribute('src') ?? '';
+        return /[?&]ik=([^&]+)/.exec(url)?.[1] ?? null;
+      },
+    });
+    return injected?.result ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Content scripts are absent on a tab that loaded before the extension did. */
@@ -78,114 +90,122 @@ async function askContentScript(tabId, message) {
   }
 }
 
-// ─── Evidence ────────────────────────────────────────────────────────────────
+// ─── Is there something to verify? ───────────────────────────────────────────
 
 async function detectSource() {
+  if (busy) return;
+
+  if (droppedEml) {
+    els.verify.disabled = false;
+    say(`Ready: ${droppedEml.label}`, 'ok');
+    return;
+  }
+
   const tab = await activeTab();
   if (!isGmail(tab)) {
-    els.capture.disabled = true;
-    els.sourceHint.className = 'hint';
-    els.sourceHint.textContent = 'Open a message in Gmail, or drop a file below.';
+    els.verify.disabled = true;
+    say('Open a message in Gmail.');
     return;
   }
 
   const located = await askContentScript(tab.id, { type: 'mailproof:locate' });
   if (!located) {
-    els.capture.disabled = true;
-    els.sourceHint.className = 'hint';
-    els.sourceHint.textContent = 'Reload the Gmail tab so MailProof can read it.';
+    els.verify.disabled = true;
+    say('Reload the Gmail tab so MailProof can read it.');
     return;
   }
-
   if (!located.message) {
-    els.capture.disabled = true;
-    els.sourceHint.className = 'hint';
-    els.sourceHint.textContent = 'No message open. Click one in Gmail.';
+    els.verify.disabled = true;
+    say('No message open. Click one in Gmail.');
     return;
   }
 
-  els.capture.disabled = false;
-  els.sourceHint.className = 'hint ok';
-  els.sourceHint.textContent = located.message.subject
-    ? `Ready: “${located.message.subject}”`
-    : 'A message is open and ready to read.';
+  els.verify.disabled = false;
+  say(located.message.subject || 'A message is open.', 'ok');
 }
 
-async function captureFromGmail() {
+/** The bytes to verify: whatever Gmail has open, or the file that replaced it. */
+async function collectEml() {
+  if (droppedEml) return droppedEml.raw;
+
   const tab = await activeTab();
-  if (!isGmail(tab)) return;
+  if (!isGmail(tab)) throw new Error('Open a message in Gmail.');
 
-  els.capture.disabled = true;
-  els.sourceHint.className = 'hint';
-  els.sourceHint.textContent = 'Reading the original source…';
-
+  say('Reading the original source…');
   const ik = await gmailSessionKey(tab.id);
   const captured = await askContentScript(tab.id, { type: 'mailproof:capture', ik });
-
   if (!captured?.ok) {
-    els.capture.disabled = false;
-    els.sourceHint.className = 'hint';
-    els.sourceHint.textContent =
-      captured?.detail ?? 'Could not read the message. Use "Show original" and drop the file.';
-    return;
+    els.fallback.hidden = false;
+    throw new Error(captured?.detail ?? 'Gmail did not return the original source.');
   }
-
-  await useEml(captured.raw, captured.subject || 'the open message');
+  say(`${captured.subject || 'Message'} · ${captured.raw.length.toLocaleString()} bytes`, 'ok');
+  return captured.raw;
 }
 
-async function useEml(raw, label) {
-  currentEml = raw;
+// ─── The one action ──────────────────────────────────────────────────────────
+
+async function verify() {
+  if (busy) return;
+  busy = true;
+  els.verify.disabled = true;
+  els.dropzone?.classList.add('busy');
   resetStages();
   els.result.hidden = true;
   els.disclosureSection.hidden = true;
-  els.redeem.disabled = false;
-  els.capture.disabled = false;
-  els.sourceHint.className = 'hint ok';
-  els.sourceHint.textContent = `Loaded: ${label} · ${raw.length.toLocaleString()} bytes`;
-  await inspect(raw);
+
+  let nullifier = null;
+  let txId = null;
+
+  try {
+    const raw = await collectEml();
+    const response = await fetch(`${DAEMON}/api/redeem`, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+      body: raw,
+    });
+
+    await readSse(response, {
+      stage: (data) => {
+        setStage(data.id, data.state === 'done' ? 'done' : 'running', data.detail ?? data.note ?? '');
+        if (data.nullifier) nullifier = data.nullifier;
+        if (data.txId) txId = data.txId;
+      },
+      failed: (data) => {
+        for (const li of els.stages.children) {
+          if (li.className === 'running') li.className = 'failed';
+        }
+        showResult(
+          'rejected',
+          data.code === 'CLAIM_ALREADY_USED' ? 'ALREADY CLAIMED' : 'REJECTED',
+          data.message,
+          nullifier ? `nullifier ${nullifier}` : '',
+        );
+      },
+      done: (data) => {
+        showResult(
+          'ok',
+          'CLAIM VERIFIED',
+          `Approved claims on chain: ${data.approvedClaimCount}`,
+          [nullifier && `nullifier ${nullifier}`, txId && `tx ${txId}`].filter(Boolean).join('\n'),
+        );
+        renderDisclosure();
+        // Let the room watch the on-chain counter advance, rather than
+        // leaving the chip on the figure it had when the panel opened.
+        void refreshState();
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'something went wrong';
+    showResult('rejected', 'COULD NOT VERIFY', message, '');
+    say(message);
+  } finally {
+    busy = false;
+    els.dropzone?.classList.remove('busy');
+    await detectSource();
+  }
 }
 
-/** Structural report from the daemon: which DKIM signatures the message carries. */
-async function inspect(raw) {
-  els.evidence.hidden = true;
-  els.evidence.replaceChildren();
-
-  const report = await postText('/api/inspect', raw)
-    .then((r) => r.json())
-    .catch(() => null);
-  if (!report?.ok) return;
-
-  const rows = [
-    ['Line endings', report.lineEnding, ''],
-    ['Body', `${report.bodyBytes.toLocaleString()} bytes`, ''],
-    ['DKIM signatures', String(report.signatures.length), ''],
-  ];
-  for (const signature of report.signatures) {
-    const matches = signature.domain === report.expectedIssuer;
-    rows.push([
-      'Signed by',
-      `d=${signature.domain ?? '?'} · s=${signature.selector ?? '?'} · ${signature.algorithm ?? '?'}`,
-      matches ? 'ok' : '',
-    ]);
-  }
-  rows.push([
-    'Expected issuer',
-    report.expectedIssuer,
-    report.matchesExpectedIssuer ? 'ok' : 'bad',
-  ]);
-
-  for (const [term, detail, tone] of rows) {
-    const dt = document.createElement('dt');
-    dt.textContent = term;
-    const dd = document.createElement('dd');
-    dd.textContent = detail;
-    if (tone) dd.className = tone;
-    els.evidence.append(dt, dd);
-  }
-  els.evidence.hidden = false;
-}
-
-// ─── Redemption ──────────────────────────────────────────────────────────────
+// ─── Rendering ───────────────────────────────────────────────────────────────
 
 function resetStages() {
   for (const li of els.stages.children) {
@@ -222,62 +242,7 @@ function showResult(kind, headline, sub, hash) {
   els.result.hidden = false;
 }
 
-async function redeem() {
-  if (!currentEml || redeeming) return;
-  redeeming = true;
-  resetStages();
-  els.redeem.disabled = true;
-  els.capture.disabled = true;
-  els.dropzone.classList.add('busy');
-  els.result.hidden = true;
-
-  let nullifier = null;
-  let txId = null;
-
-  try {
-    const response = await postText('/api/redeem', currentEml);
-    await readSse(response, {
-      stage: (data) => {
-        setStage(data.id, data.state === 'done' ? 'done' : 'running', data.detail ?? data.note ?? '');
-        if (data.nullifier) nullifier = data.nullifier;
-        if (data.txId) txId = data.txId;
-      },
-      failed: (data) => {
-        for (const li of els.stages.children) {
-          if (li.className === 'running') li.className = 'failed';
-        }
-        showResult(
-          'rejected',
-          data.code === 'CLAIM_ALREADY_USED' ? 'ALREADY CLAIMED' : 'REJECTED',
-          data.message,
-          nullifier ? `nullifier ${nullifier}` : '',
-        );
-      },
-      done: (data) => {
-        showResult(
-          'ok',
-          'CLAIM VERIFIED',
-          `Approved claims on chain: ${data.approvedClaimCount}`,
-          [nullifier && `nullifier ${nullifier}`, txId && `tx ${txId}`].filter(Boolean).join('\n'),
-        );
-        renderDisclosure();
-        // Let the room watch the on-chain counter advance, rather than
-        // leaving the chip on the figure it had when the panel opened.
-        void refreshState();
-      },
-    });
-  } catch (error) {
-    showResult('rejected', 'NO CONNECTION', daemonHint(error), '');
-  } finally {
-    redeeming = false;
-    els.redeem.disabled = false;
-    els.capture.disabled = false;
-    els.dropzone.classList.remove('busy');
-  }
-}
-
 function renderDisclosure() {
-  const domain = state?.issuerDomain ?? 'the trusted sender domain';
   const fill = (list, items) => {
     list.replaceChildren();
     for (const text of items) {
@@ -288,7 +253,7 @@ function renderDisclosure() {
   };
   fill(els.revealed, [
     `The claim type — ${state?.claimType ?? 'a claim'}`,
-    `That ${domain} signed it`,
+    `That ${state?.issuerDomain ?? 'the trusted sender'} signed it`,
     'That the claim is valid',
     'That it has not been used before',
   ]);
@@ -306,14 +271,6 @@ function renderDisclosure() {
 
 // ─── Daemon ──────────────────────────────────────────────────────────────────
 
-function postText(path, body) {
-  return fetch(`${DAEMON}${path}`, {
-    method: 'POST',
-    headers: { 'content-type': 'text/plain; charset=utf-8' },
-    body,
-  });
-}
-
 const daemonHint = (error) =>
   `${error instanceof Error ? error.message : 'request failed'} — is the daemon running? ` +
   'npm run web:dev';
@@ -323,6 +280,12 @@ function chip(text, tone = '') {
   node.className = tone ? `chip ${tone}` : 'chip';
   node.textContent = text;
   return node;
+}
+
+function notify(text, tone = '') {
+  els.notice.className = tone ? `notice ${tone}` : 'notice';
+  els.notice.textContent = text;
+  els.notice.hidden = false;
 }
 
 async function refreshState() {
@@ -360,16 +323,14 @@ async function refreshState() {
   }
 }
 
-function notify(text, tone = '') {
-  els.notice.className = tone ? `notice ${tone}` : 'notice';
-  els.notice.textContent = text;
-  els.notice.hidden = false;
+// ─── Fallback, once it has been earned ───────────────────────────────────────
+
+async function useFile(raw, label) {
+  droppedEml = { raw, label };
+  els.result.hidden = true;
+  els.disclosureSection.hidden = true;
+  await detectSource();
 }
-
-// ─── Wiring ──────────────────────────────────────────────────────────────────
-
-els.capture.addEventListener('click', captureFromGmail);
-els.redeem.addEventListener('click', redeem);
 
 els.dropzone.addEventListener('click', () => els.file.click());
 els.dropzone.addEventListener('keydown', (event) => {
@@ -387,37 +348,50 @@ els.dropzone.addEventListener('drop', async (event) => {
   event.preventDefault();
   els.dropzone.classList.remove('over');
   const file = event.dataTransfer?.files?.[0];
-  if (file) await useEml(await file.text(), file.name);
+  if (file) await useFile(await file.text(), file.name);
 });
 els.file.addEventListener('change', async () => {
   const file = els.file.files?.[0];
-  if (file) await useEml(await file.text(), file.name);
+  if (file) await useFile(await file.text(), file.name);
   els.file.value = '';
 });
-
-/** Both fallbacks are served by the daemon, so they share one loader. */
-async function loadFromDaemon(path, label) {
+els.loadDemoEmail.addEventListener('click', async () => {
   try {
-    const response = await fetch(`${DAEMON}${path}`);
+    const response = await fetch(`${DAEMON}/api/demo-eml`);
     if (!response.ok) throw new Error(`daemon replied ${response.status}`);
-    await useEml(await response.text(), label);
+    await useFile(await response.text(), "this machine's demo email");
   } catch (error) {
     notify(daemonHint(error), 'bad');
   }
+});
+
+// ─── Wiring ──────────────────────────────────────────────────────────────────
+
+els.verify.addEventListener('click', verify);
+
+/**
+ * Follow whatever the reader is looking at.
+ *
+ * Switching messages must drop a file that replaced an earlier read, or the
+ * panel would keep verifying that file while naming a different subject.
+ *
+ * Gmail is a single page: opening another message changes only the URL
+ * fragment, so `status === 'complete'` never fires again after the first
+ * load. The poll is the safety net for the case where even the URL does not
+ * change — asking the content script costs nothing and the alternative is a
+ * panel that quietly points at the wrong email.
+ */
+function sourceChanged() {
+  droppedEml = null;
+  void detectSource();
 }
 
-els.loadSample.addEventListener('click', () =>
-  loadFromDaemon('/api/sample-eml', 'the synthetic sample'),
-);
-els.loadDemoEmail.addEventListener('click', () =>
-  loadFromDaemon('/api/demo-eml', "this machine's demo email"),
-);
-
-// The panel outlives the tab it was opened over, so keep the source in step.
-chrome.tabs.onActivated.addListener(() => void detectSource());
+chrome.tabs.onActivated.addListener(sourceChanged);
 chrome.tabs.onUpdated.addListener((_id, change) => {
-  if (change.status === 'complete') void detectSource();
+  if (change.url) sourceChanged();
+  else if (change.status === 'complete') void detectSource();
 });
+setInterval(() => void detectSource(), 2000);
 
 await refreshState();
 await detectSource();

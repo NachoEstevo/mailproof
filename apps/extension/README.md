@@ -44,12 +44,16 @@ Then open Gmail, click a signed message, and click the MailProof icon.
 
 ## The panel
 
-| Control | What it does |
-| --- | --- |
-| **Read the open email** | Pulls the original source of the message open in Gmail |
-| Drop zone | Any `.eml`, for when Gmail's markup has moved or the message is elsewhere |
-| *Use the synthetic sample* | The committed fixture. Signed by a different issuer, so it is **meant** to be rejected |
-| *Use this machine's demo email* | Only appears where `fixtures/private-emails/flight-edu.eml` exists |
+Click a message in Gmail. Press **Verify this email**. That is the whole
+interface — reading the message and redeeming the claim are one action,
+because nobody opens an email in order to load it somewhere.
+
+The panel names the message it is about to verify, so you can see it followed
+you to the right one before anything is sent.
+
+A drop zone and a *use this machine's demo email* link exist, but they stay
+hidden until reading from Gmail has actually failed. If you can see them,
+something went wrong — that is the signal, not the normal state.
 
 ## What can break
 

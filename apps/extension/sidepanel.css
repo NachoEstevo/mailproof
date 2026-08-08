@@ -79,7 +79,14 @@ section h3 {
 
 /* ── Evidence ────────────────────────────────────────────────────────────── */
 
-.hint { margin: 8px 0 0; font-size: 12px; color: var(--ink-dim); }
+/* The hint names the message about to be verified, so it is the panel's
+   second most important line after the button itself. */
+.hint {
+  margin: 10px 0 18px;
+  font-size: 13px;
+  color: var(--ink-dim);
+  overflow-wrap: anywhere;
+}
 .hint.ok { color: var(--verified); }
 
 .dropzone {
