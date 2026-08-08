@@ -34,7 +34,7 @@
       "claimType": "FLIGHT_CANCELLED",
       "issuerDomain": "udesa.edu.ar",
       "campaigns": [
-        "mailproof-demo-2608080003"
+        "mailproof-demo-2608080007"
       ],
       "requiredOutputs": [
         "cancellationMarker",
