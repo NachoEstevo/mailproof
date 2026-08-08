@@ -230,7 +230,7 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   /* Three rows rather than padding: the content lands at the same point in the
      composition — in the sky, above the meadow — at any viewport height. */
   display: grid;
-  grid-template-rows: 0.86fr auto 1.94fr;
+  grid-template-rows: 0.8fr auto 2fr;
   padding: 0;
   background-color: var(--sky-deep);
   background-image: url("assets/hero.webp");
@@ -377,34 +377,27 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   vertical-align: -0.12em;
 }
 
+/*
+ * "Built on Midnight", set as a line of type rather than a chip.
+ *
+ * It was a bordered pill with the mark inside. Nothing else on the page is
+ * enclosed in a rounded outline — the sections are separated by colour and by
+ * rules, not by boxes — so the pill read as a component borrowed from another
+ * site. As plain lettering it matches the eyebrow labels it sits beside, and
+ * it is a credit, which should be quiet.
+ */
 .built-on {
-  display: inline-flex;
-  align-items: center;
-  gap: 9px;
-  margin-bottom: 26px;
-  padding: 7px 15px 7px 12px;
-  border: 1px solid rgba(250, 241, 197, 0.34);
-  border-radius: 999px;
+  display: inline-block;
+  margin-bottom: clamp(16px, 2.4vh, 26px);
   font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.05em;
-  color: var(--paper);
-  text-decoration: none;
-  transition: border-color 0.16s;
-}
-.built-on:hover { border-color: var(--paper); }
-.built-on .midnight-mark { width: 15px; height: 15px; }
-
-/* In the hero the badge names the network before the headline does anything
-   else, so it stays small and quiet — a credit, not a claim. */
-.hero-badge {
-  margin-bottom: clamp(14px, 2.2vh, 24px);
-  padding: 6px 13px 6px 10px;
   font-size: 11.5px;
-  background: rgba(0, 0, 0, 0.16);
-  backdrop-filter: blur(2px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(250, 241, 197, 0.6);
+  text-decoration: none;
+  transition: color 0.16s;
 }
-.hero-badge .midnight-mark { width: 13px; height: 13px; }
+.built-on:hover { color: var(--paper); }
 
 .step h3 .midnight-mark { color: var(--dandelion); width: 0.72em; height: 0.72em; }
 
