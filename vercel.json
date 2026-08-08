@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "echo 'no dependencies: the landing is static'",
+  "buildCommand": "echo 'nothing to build: docs.html is committed'",
+  "outputDirectory": "apps/landing"
+}
