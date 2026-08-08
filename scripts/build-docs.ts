@@ -101,9 +101,6 @@ ${s.html
         <a href="#security">Security</a>
       </nav>
       <div class="wordmark"><a href="index.html" style="text-decoration: none">MailProof</a></div>
-      <div class="right">
-        <a class="btn" href="${REPO}">GitHub</a>
-      </div>
     </header>
 
     <div class="page docs-layout">
