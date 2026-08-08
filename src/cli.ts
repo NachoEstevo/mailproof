@@ -2,6 +2,7 @@
  * CLI for interacting with mailproof contract
  */
 import { createInterface } from 'node:readline/promises';
+import { submitDirect, submitTxVia, needsDirectSubmission } from './submit.js';
 import { stdin, stdout } from 'node:process';
 import { WebSocket } from 'ws';
 
@@ -63,7 +64,9 @@ async function createProviders(walletCtx: WalletContext) {
       );
       return walletCtx.wallet.finalizeRecipe(recipe);
     },
-    submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
+    // Direct on public networks: the SDK's own submission loses a
+    // disconnect race off loopback. See src/submit.ts.
+    submitTx: submitTxVia(walletCtx.wallet, networkConfig.node) as any,
   };
 
   const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);

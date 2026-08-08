@@ -17,6 +17,7 @@
  * never reaches the chain in any mode; the chain records only hashes.
  */
 import { existsSync, readFileSync } from 'node:fs';
+import { submitDirect, submitTxVia, needsDirectSubmission } from '../../src/submit.js';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -147,7 +148,9 @@ function serverWalletProvider(walletCtx: WalletContext): WalletProvider & Midnig
       );
       return walletCtx.wallet.finalizeRecipe(recipe);
     },
-    submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
+    // Direct on public networks: the SDK's own submission loses a
+    // disconnect race off loopback. See src/submit.ts.
+    submitTx: submitTxVia(walletCtx.wallet, networkConfig.node) as any,
   };
 }
 

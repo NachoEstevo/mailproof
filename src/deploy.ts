@@ -5,6 +5,7 @@
  * No readline prompts, no .midnight-seed file.
  */
 import { resolveNetwork, getOrCreateWallet, formatWalletBackupNotice, recordDeployment } from './network';
+import { submitDirect, submitTxVia, needsDirectSubmission } from './submit.js';
 import { createWallet, persistWalletState, unshieldedToken, type WalletContext } from './wallet';
 import { WebSocket } from 'ws';
 import * as Rx from 'rxjs';
@@ -99,7 +100,9 @@ async function createProviders(walletCtx: WalletContext) {
       );
       return walletCtx.wallet.finalizeRecipe(recipe);
     },
-    submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
+    // Direct on public networks: the SDK's own submission loses a
+    // disconnect race off loopback. See src/submit.ts.
+    submitTx: submitTxVia(walletCtx.wallet, networkConfig.node) as any,
   };
 
   const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
@@ -226,7 +229,12 @@ async function main() {
       (payload) => walletCtx.unshieldedKeystore.signData(payload),
     );
     const finalized = await walletCtx.wallet.finalizeRecipe(recipe);
-    await walletCtx.wallet.submitTransaction(finalized);
+    if (needsDirectSubmission(networkConfig.node)) {
+      const receipt = await submitDirect(finalized as never, { nodeUrl: networkConfig.node });
+      console.log(`  Registration finalized in block ${receipt.blockHash.slice(0, 18)}…`);
+    } else {
+      await walletCtx.wallet.submitTransaction(finalized);
+    }
   }
 
   if (dustState.dust.balance(new Date()) === 0n) {

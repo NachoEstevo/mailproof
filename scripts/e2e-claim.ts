@@ -14,6 +14,7 @@
  *   npx tsx scripts/e2e-claim.ts [--claim-id <id>]
  */
 import { WebSocket } from 'ws';
+import { submitDirect, submitTxVia, needsDirectSubmission } from '../src/submit.js';
 
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
@@ -124,7 +125,9 @@ async function createProviders(walletCtx: WalletContext) {
       );
       return walletCtx.wallet.finalizeRecipe(recipe);
     },
-    submitTx: (tx: any) => walletCtx.wallet.submitTransaction(tx) as any,
+    // Direct on public networks: the SDK's own submission loses a
+    // disconnect race off loopback. See src/submit.ts.
+    submitTx: submitTxVia(walletCtx.wallet, networkConfig.node) as any,
   };
 
   const zkConfigProvider = new NodeZkConfigProvider(zkConfigPath);
