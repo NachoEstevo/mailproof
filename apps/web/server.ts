@@ -163,7 +163,12 @@ function loadActiveBlueprintEntry(): BlueprintEntry | undefined {
  */
 function dkimDirectEntry(): BlueprintEntry | undefined {
   const entry = loadActiveBlueprintEntry();
-  return entry?.dkim && entry.status === 'pinned' ? entry : undefined;
+  if (entry?.status !== 'pinned') return undefined;
+  // A pinned key is one way to be verifiable. The other is a campaign open to
+  // every institution, which pins no key because it has not met the signer:
+  // the attestor resolves it from DNS instead. Requiring `dkim` here refused
+  // the entire open-campaign path with "cannot verify on this deployment".
+  return entry.dkim || entry.issuerDomain === '*' ? entry : undefined;
 }
 
 /** The devnet wallet this process holds — the fallback when none is connected. */
@@ -397,6 +402,9 @@ async function main(): Promise<void> {
       verificationMode: (() => {
         const entry = loadActiveBlueprintEntry();
         if (!entry) return 'unknown';
+        // An open campaign has no pinned key and is not zk-email either: it
+        // verifies DKIM against the key each signer publishes.
+        if (entry.issuerDomain === '*') return 'dkim-dns';
         if (!entry.dkim) return 'zk-email';
         return entry.status === 'pinned' ? 'dkim-direct' : 'dkim-direct (pending)';
       })(),
