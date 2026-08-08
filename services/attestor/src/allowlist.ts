@@ -5,7 +5,7 @@
  * sign for is declared in config/blueprints.json and validated on load, so a
  * malformed entry fails at startup rather than at the first request.
  */
-import { readFileSync } from 'node:fs';
+import { readFileSync, statSync } from 'node:fs';
 import { z } from 'zod';
 
 import { CLAIM_TYPE, type ClaimTypeName } from '../../../packages/shared/constants.js';
@@ -130,4 +130,43 @@ export function parseAllowlist(raw: unknown): BlueprintAllowlist {
 
 export function loadAllowlist(path: string): BlueprintAllowlist {
   return parseAllowlist(JSON.parse(readFileSync(path, 'utf8')));
+}
+
+/**
+ * An allowlist that follows the file, re-read when its mtime moves.
+ *
+ * Opening a new demo round means a new campaign, and the attestor will not
+ * sign for a campaign it has never heard of — without this, every round would
+ * need the service restarted. The policy this reads is exactly as trusted as
+ * before: anyone able to rewrite the file could already restart the process.
+ *
+ * A broken file keeps the last good policy rather than emptying it. Losing
+ * the allowlist would turn a typo into "sign nothing", and the operator would
+ * see it as every claim being rejected for the wrong reason.
+ */
+export function reloadingAllowlist(
+  path: string,
+  onReload: (allowlist: BlueprintAllowlist) => void = () => {},
+): () => BlueprintAllowlist {
+  let current = loadAllowlist(path);
+  let seenMtimeMs = statSync(path).mtimeMs;
+
+  return () => {
+    let mtimeMs: number;
+    try {
+      mtimeMs = statSync(path).mtimeMs;
+    } catch {
+      return current; // file momentarily gone: keep serving the last policy
+    }
+    if (mtimeMs === seenMtimeMs) return current;
+    seenMtimeMs = mtimeMs;
+
+    try {
+      current = loadAllowlist(path);
+      onReload(current);
+    } catch {
+      // Left on the last good policy on purpose; see above.
+    }
+    return current;
+  };
 }

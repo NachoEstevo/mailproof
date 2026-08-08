@@ -14,7 +14,7 @@ import { loadAttestorSecretKey, loadConfig } from '../../../config/mailproof.js'
 import { toHex } from '../../../packages/shared/hashes.js';
 import { publicKeyFromSecret } from '../../../packages/shared/schnorr.js';
 import { attest } from './attest.js';
-import { loadAllowlist, type BlueprintAllowlist } from './allowlist.js';
+import { reloadingAllowlist, type BlueprintAllowlist } from './allowlist.js';
 import { ATTESTOR_ERROR, AttestorError, toAttestorError } from './errors.js';
 import { FixtureProofVerifier, type FixtureEntry } from './fixture-verifier.js';
 import { logAttest, newRequestId, type Sink } from './logging.js';
@@ -34,7 +34,11 @@ function maxRequestBytes(env: NodeJS.ProcessEnv): number {
 
 export interface ServerDeps {
   verifier: ProofVerifier;
-  allowlist: BlueprintAllowlist;
+  /**
+   * Read per request, not captured once: a new demo round adds a campaign to
+   * the file, and the attestor must honour it without being restarted.
+   */
+  allowlist: () => BlueprintAllowlist;
   secretKey: bigint;
   attestorKeyId: string;
   env?: NodeJS.ProcessEnv;
@@ -51,7 +55,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   app.get('/health', async () => ({
     status: 'ok',
     version: VERSION,
-    blueprints: deps.allowlist.slugs,
+    blueprints: deps.allowlist().slugs,
     verifier: deps.verifier.name,
     // Surfaced so a fixture-backed deployment cannot look like a real one.
     cryptographicVerification: deps.verifier.isCryptographic,
@@ -91,7 +95,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
         },
         {
           verifier: deps.verifier,
-          allowlist: deps.allowlist,
+          allowlist: deps.allowlist(),
           secretKey: deps.secretKey,
           attestorKeyId: deps.attestorKeyId,
         },
@@ -217,9 +221,11 @@ export async function start(): Promise<void> {
   }
 
   const here = path.dirname(fileURLToPath(import.meta.url));
-  const allowlist = loadAllowlist(
+  const allowlist = reloadingAllowlist(
     env.MAILPROOF_BLUEPRINTS_FILE?.trim() ||
       path.resolve(here, '../../../config/blueprints.json'),
+    (reloaded) =>
+      console.log(`allowlist reloaded: ${reloaded.slugs.join(', ')}`),
   );
 
   const verifier = resolveVerifier(env, here);
@@ -242,7 +248,7 @@ export async function start(): Promise<void> {
   const host = env.MAILPROOF_ATTESTOR_HOST ?? '127.0.0.1';
   await app.listen({ port, host });
   console.log(`attestor listening on http://${host}:${port}  (verifier: ${verifier.name})`);
-  console.log(`allowlisted blueprints: ${allowlist.slugs.join(', ')}`);
+  console.log(`allowlisted blueprints: ${allowlist().slugs.join(', ')}`);
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {

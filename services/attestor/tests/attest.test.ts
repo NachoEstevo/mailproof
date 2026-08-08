@@ -13,7 +13,7 @@ import { parseAllowlist } from '../src/allowlist.js';
 import { ATTESTOR_ERROR, AttestorError } from '../src/errors.js';
 import { FixtureProofVerifier } from '../src/fixture-verifier.js';
 import { logAttest } from '../src/logging.js';
-import { buildServer } from '../src/server.js';
+import { buildServer, type ServerDeps } from '../src/server.js';
 import type { ProofSubmission, ProofVerifier, VerifiedEvidence } from '../src/verifier.js';
 import { ZkEmailProofVerifier } from '../src/zk-email-verifier.js';
 
@@ -81,6 +81,12 @@ function deps(overrides: Partial<AttestDeps> = {}): AttestDeps {
     attestorKeyId: 'test-v1',
     ...overrides,
   };
+}
+
+/** buildServer reads the allowlist per request; attest() takes it by value. */
+function serverDeps(overrides: Partial<AttestDeps> = {}): ServerDeps {
+  const { allowlist, ...rest } = deps(overrides);
+  return { ...rest, allowlist: () => allowlist };
 }
 
 function request(overrides: Partial<AttestRequest> = {}): AttestRequest {
@@ -273,7 +279,7 @@ describe('A-11 context-bound nullifier', () => {
 describe('A-12 logging', () => {
   it('emits no evidence, only correlation data', async () => {
     const lines: string[] = [];
-    const app = buildServer({ ...deps(), logSink: (l) => lines.push(l) });
+    const app = buildServer({ ...serverDeps(), logSink: (l) => lines.push(l) });
 
     const response = await app.inject({
       method: 'POST',
@@ -359,7 +365,7 @@ describe('A-15 verifier failure', () => {
       },
     };
     const lines: string[] = [];
-    const app = buildServer({ ...deps({ verifier: flaky }), logSink: (l) => lines.push(l) });
+    const app = buildServer({ ...serverDeps({ verifier: flaky }), logSink: (l) => lines.push(l) });
 
     const response = await app.inject({
       method: 'POST',
@@ -391,7 +397,7 @@ describe('HTTP surface', () => {
   let app: ReturnType<typeof buildServer>;
 
   beforeEach(() => {
-    app = buildServer(deps());
+    app = buildServer(serverDeps());
   });
 
   it('reports health without exposing key material', async () => {
@@ -408,7 +414,7 @@ describe('HTTP surface', () => {
   });
 
   it('A-09 rejects an oversized body', async () => {
-    const small = buildServer({ ...deps(), env: { MAILPROOF_MAX_REQUEST_BYTES: '2048' } });
+    const small = buildServer({ ...serverDeps(), env: { MAILPROOF_MAX_REQUEST_BYTES: '2048' } });
     const response = await small.inject({
       method: 'POST',
       url: '/attest',
