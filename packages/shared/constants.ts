@@ -36,10 +36,18 @@ export const SCALAR_LIMB_SHIFT = 128n;
 export const JUBJUB_ORDER_HI = JUBJUB_ORDER >> SCALAR_LIMB_SHIFT;
 export const JUBJUB_ORDER_LO = JUBJUB_ORDER & ((1n << SCALAR_LIMB_SHIFT) - 1n);
 
-/** Claim types (§11.1). Only FLIGHT_CANCELLED is implemented. */
+/**
+ * Claim types (§11.1).
+ *
+ * The value is pinned into the contract at deploy time and compared against
+ * every claim, so a number here is a wire format: reuse one and two campaigns
+ * become mutually replayable. Append, never renumber.
+ */
 export const CLAIM_TYPE = {
   FLIGHT_CANCELLED: 1n,
   EVENT_REGISTERED: 2n,
+  /** Holder controls a mailbox at the pinned domain. Proves nothing else. */
+  DOMAIN_MEMBER: 3n,
 } as const;
 
 export type ClaimTypeName = keyof typeof CLAIM_TYPE;
