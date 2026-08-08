@@ -26,7 +26,8 @@
     "attestor:test": "vitest run services/attestor",
     "contract:test": "vitest run contracts/tests",
     "web:dev": "tsx apps/web/server.ts",
-    "demo:reset": "tsx scripts/reset-demo.ts"
+    "demo:reset": "tsx scripts/reset-demo.ts",
+    "docs:build": "tsx scripts/build-docs.ts"
   },
   "comments": {
     "overrides": [
@@ -65,6 +66,7 @@
   "devDependencies": {
     "@types/node": "^22.0.0",
     "@types/ws": "^8.18.1",
+    "marked": "16.4.2",
     "tsx": "^4.23.1",
     "typescript": "5.9.3",
     "vitest": "^3.2.4"
