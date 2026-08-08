@@ -1,0 +1,1262 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Documentation — MailProof</title>
+    <meta
+      name="description"
+      content="How to verify an email domain, once per person, without learning the address."
+    />
+    <meta name="theme-color" content="#faf1c5" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+
+  <body>
+    <header class="bar on-paper">
+      <nav>
+        <a href="index.html">Home</a>
+        <a href="#quickstart">Quickstart</a>
+        <a href="#api-reference">API</a>
+        <a href="#security">Security</a>
+      </nav>
+      <div class="wordmark"><a href="index.html" style="text-decoration: none">MailProof</a></div>
+      <div class="right">
+        <a class="btn" href="https://github.com/NachoEstevo/mailproof">GitHub</a>
+      </div>
+    </header>
+
+    <div class="page docs-layout">
+      <aside class="toc">
+        <strong>Documentation</strong>
+          <a href="#what-it-is">What MailProof is</a>
+          <a href="#what-is-an-sdk">What an SDK is</a>
+          <a href="#quickstart">Quickstart</a>
+          <a href="#api-reference">API reference</a>
+          <a href="#security">Security model</a>
+        <strong style="margin-top: 26px">Repository</strong>
+        <a href="https://github.com/NachoEstevo/mailproof">Source</a>
+        <a href="https://github.com/NachoEstevo/mailproof/blob/main/docs/DECISIONS.md">Decisions</a>
+        <a href="https://github.com/NachoEstevo/mailproof/blob/main/docs/KNOWN_LIMITATIONS.md">Known limitations</a>
+      </aside>
+
+      <main class="doc">
+        <section id="what-it-is">
+          <h2>What MailProof is</h2>
+          <p>Every site that gives something away to a particular kind of person — a student discount, a work-email-only tier, a free plan with one per human — has two jobs, and today they are solved by the same field.</p>
+          <p>The first job is <strong>eligibility</strong>. To know someone is a student you ask for their student address. Now you have it: in your users table, in your logs, in your backups, in whatever analytics tool the signup form also posts to, and in the dump if you are ever breached. You did not want the address. You wanted one bit of information about it, and you kept the whole thing because that was the only way to get the bit.</p>
+          <p>The second job is <strong>uniqueness</strong>. To stop one person taking the free tier fifty times you have to recognise them coming back. The usual answer is a unique index on the email column, and it does not work. Gmail delivers <code>me+1@gmail.com</code>, <code>me+2@gmail.com</code>, <code>m.e@gmail.com</code> and <code>M.E@gmail.com</code> to one inbox; a unique index sees four different people. MailProof&#39;s canonicaliser exists because of exactly this: it lowercases the local part, strips everything after the first <code>+</code>, and — for the short, explicit list of providers that behave this way, <code>gmail.com</code> and <code>googlemail.com</code> — removes dots, so all four spellings collapse to one string.</p>
+          <p>So the two jobs pull against each other. The thing that actually recognises a person is the thing you would rather not be holding, and the version of it you do hold does not recognise anybody.</p>
+          <h2>What MailProof answers instead</h2>
+          <p>One question, with one answer: <strong>educational domain, first time.</strong> Nothing else.</p>
+          <pre><code class="language-ts">const result = await mailproof.verify(eml)
+          
+          if (result.ok &amp;&amp; result.tier === &#39;STUDENT&#39; &amp;&amp; !result.alreadyClaimed) {
+            await grantDiscount(result.handle)   // your function, your database
+          }
+          </code></pre>
+          <p><code>result.tier</code> comes from your own rules — domains, suffixes, or a catch-all — and <code>result.alreadyClaimed</code> is a field rather than a thrown error, because &quot;has this person already had their benefit&quot; is the question you were asking. What you store is <code>result.handle</code>: a keyed hash, stable enough to enforce &quot;once&quot; and opaque to anyone who does not hold your <code>blindingKey</code> — the ledger, and anyone reading your database later.</p>
+          <p>The address never reaches your database. <code>verify</code> takes the raw message, reads the mailbox out of the signed <code>From:</code>, folds it into a keyed hash, and returns only the hash. No field of the result is an address, a name or an inbox, and nothing that leaves your process carries one.</p>
+          <h2>Why email is the right source of truth</h2>
+          <p>Three facts, none of them invented here.</p>
+          <p><strong>The domains you care about already sign their mail.</strong> DKIM is an RFC 6376 signature that the sending domain puts over its own headers, with the public key published in DNS. There is no new PKI, no issuer to onboard, no university that has to agree to anything. You do pin each signing domain&#39;s <code>p=</code> record yourself, in <code>domainKeys</code> — the SDK does no DNS lookup, and a domain with no pinned key is refused as <code>NO_PINNED_KEY</code>. A <code>.edu</code> suffix rule therefore reaches only the domains you pinned; <code>verifiableDomains()</code> returns that intersection.</p>
+          <p><strong>A signature over <code>From:</code> proves control of that mailbox.</strong> A provider will not sign a message claiming to come from a mailbox the sender does not control — that is what alignment means, and it is what DMARC checks. This is why the flow is <em>send yourself an email</em>, not <em>forward us something you received</em>. Reading <code>To:</code> would prove nothing: whoever sent the message chose the recipient, so anyone able to sign for a domain could invent an address inside it and burn a colleague&#39;s slot before they ever showed up.</p>
+          <p><strong>Freshness comes from a code.</strong> The site mints one — <code>MP-0733-X0EW-JDBZ-FQ0R</code>, four bytes of expiry and six bytes of tag in Crockford base32 — and it goes inside the signed message. It is authenticated with the site&#39;s own secret and carries its own expiry, so a fourteen-year-old archived email, an autoresponder, or a code minted for another site all fail. Without it, any signed message from the right domain would be evidence.</p>
+          <p>And the hard part — deciding who counts as a university — was already done by someone with a legal process. <code>.edu</code> is administered by EDUCAUSE for accredited institutions; <code>.edu.ar</code> is issued by NIC Argentina only to recognised educational bodies. A suffix rule is not a heuristic, it is a delegation to a registrar that verifies. Nobody stands behind &quot;is not Gmail&quot;, which is why the <code>notFreeProvider</code> rule is a friction tax rather than an anti-sybil control; <strong>Security model</strong> says what it does and does not stop.</p>
+          <h2>What is revealed, and what is not</h2>
+          <table>
+          <thead>
+          <tr>
+          <th></th>
+          <th>Email column today</th>
+          <th>MailProof</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td>Eligibility</td>
+          <td>derived from an address you hold</td>
+          <td><code>tier</code>, computed from the domain of the signed <code>From:</code></td>
+          </tr>
+          <tr>
+          <td>The address itself</td>
+          <td>stored, logged, backed up, breachable</td>
+          <td>never in the result; canonicalised, then keyed-hashed</td>
+          </tr>
+          <tr>
+          <td>Which institution</td>
+          <td>always visible</td>
+          <td>only if you set <code>reveal: &#39;domain&#39;</code></td>
+          </tr>
+          <tr>
+          <td>Repeat detection</td>
+          <td>broken by <code>+tags</code>, dots, case</td>
+          <td>one canonical mailbox, one handle, one nullifier</td>
+          </tr>
+          <tr>
+          <td>A database breach yields</td>
+          <td>a list of real addresses</td>
+          <td>a list of opaque handles</td>
+          </tr>
+          <tr>
+          <td>Who reads the raw message</td>
+          <td>you, and everything downstream of you</td>
+          <td>whatever calls <code>verify</code> — and nothing downstream of it</td>
+          </tr>
+          </tbody></table>
+          <p>That last row is the honest one. Verifying the message&#39;s own RSA-SHA256 signature requires the message, so something reads it in full. In the SDK path that something is <code>verify</code>, running in your own process. In the daemon deployment this repo ships for the demo, it is the attestor service (<code>docs/KNOWN_LIMITATIONS.md</code> §12). Either way the SDK stamps <code>trust: { emailReadBy: &#39;attestor&#39;, … }</code> on every success — a fixed literal, not a measurement — so no integrator can claim they were not told the raw message gets read somewhere. What is true in both paths is that the message stops there: the only thing that leaves is the blinded identity, and the only thing that reaches the chain is a nullifier.</p>
+          <h2>Why this needs a chain</h2>
+          <p>The &quot;already claimed&quot; set has four requirements at once, and it is the conjunction that is hard.</p>
+          <p>It must be <strong>public</strong>, so a user can check that a refusal is real rather than convenient. It must be <strong>owned by no one</strong>, so nobody can quietly delete an entry and hand a favoured account a second benefit. It must be <strong>shareable</strong>, so integrators that agree to pool a campaign see one person as one person rather than five. And it must be <strong>unreadable backwards</strong>, so publishing it does not publish a membership list.</p>
+          <p>The third one is opt-in rather than automatic: the value spent is derived under your own <code>blindingKey</code> and then under the deployment&#39;s blueprint and campaign, so two integrators with different keys, or pointed at different deployments, see the same mailbox as two different people. Pooling means sharing both.</p>
+          <p>A normal database gives you the fourth requirement and none of the first three: whoever runs it can edit it, and nobody else can verify it. A normal public chain gives you the first three and loses the fourth — write a plain hash of a mailbox to a public ledger and an observer with a wordlist recovers it. <code>packages/shared/blinding.test.ts</code> runs that exact attack against an unkeyed mailbox hash and shows it succeeding. The input space is small and enumerable; a hash is not an anonymiser.</p>
+          <p>MailProof keeps all four by hashing with a key before anything is published, and then spending that value on Midnight, where the ledger holds an insert-only <code>Set&lt;Bytes&lt;32&gt;&gt;</code> and a counter:</p>
+          <pre><code class="language-compact">const nullifier = disclose(claim.claimNullifier);
+          assert(!usedNullifiers.member(nullifier), &quot;claim already used&quot;);
+          usedNullifiers.insert(nullifier);
+          approvedClaimCount.increment(1);
+          </code></pre>
+          <p>Per redemption, the derived nullifier is the only thing disclosed. What an observer of the chain gets from a claim is a 32-byte value, a claim count and a timestamp.</p>
+          <p>Nothing more is claimed than that. A deployment is pinned at construction to one attestor, one campaign, one blueprint, one issuer domain and one claim type, and all five are disclosed into the ledger at deployment — so the <em>population</em> is public even though its members are not. Timing and repeated use within a campaign remain linkable. The full list is in <code>docs/KNOWN_LIMITATIONS.md</code>; <strong>Security model</strong> covers the parts that are load-bearing.</p>
+        </section>
+
+        <section id="what-is-an-sdk">
+          <h2>What an SDK is</h2>
+          <p>An SDK — a software development kit — is the code the authors of a system publish so that everybody who integrates with it does not have to rebuild it. It is the difference between being handed the fitted parts and being handed the specification. You could write an RFC 6376 DKIM verifier, a challenge format, an address canonicaliser and a nullifier scheme yourself; the SDK is the argument that you should not have to, and that the four of them have to agree with each other to be worth anything.</p>
+          <p>What you install is a library. It runs inside your own process, on your own server, called from your own code — not a service you send your users to.</p>
+          <h2>What the MailProof SDK does</h2>
+          <p><code>createMailProof</code> returns an object with three methods, and those three methods are the whole surface. It is server-side by construction: the configuration holds <code>challengeSecret</code> and <code>blindingKey</code>, and neither may reach a browser.</p>
+          <p><strong>It mints codes.</strong> <code>startVerification()</code> returns a <code>code</code>, an <code>expiresAt</code> and an <code>instructions</code> string with the code already in it, ready to show. The code carries its own expiry and its own HMAC tag, bound to your <code>audience</code>, so verifying it needs no stored state, and a code minted for your site does not authenticate anywhere else.</p>
+          <p><strong>It reads the message.</strong> <code>verify(eml)</code> parses the <code>.eml</code>, tries each pinned DKIM key, and for each signature checks that it verifies, that it has not passed its <code>x=</code> and is no older than <code>maxSignatureAgeMs</code> (24 hours by default), that it covers <code>From:</code>, that no unsigned instance of <code>From:</code> was prepended, that the signing domain aligns with the mailbox domain, and that the signed subject or plain-text body carries a code that authenticates for your <code>audience</code> and has not expired (<code>challengeTtlMs</code>, 15 minutes by default). When every key fails, the reason you get back is from the attempt that got furthest, not the last one tried. It then canonicalises the mailbox and folds it through a keyed hash.</p>
+          <p><strong>It applies your tier rules.</strong> <code>tiers</code> is a list; the first rule that matches the domain wins; a domain matching nothing gets no tier, never a default one. <code>notFreeProvider</code> is available and is a friction tax on casual farming, not an anti-sybil control — a dollar-a-year domain with catch-all MX defeats it. Gate anything that matters on an explicit domain list.</p>
+          <p><strong>It hands back a decision.</strong> The result is <code>{ ok: true, tier, handle, alreadyClaimed, nullifier, contractAddress, trust }</code> — plus <code>domain</code> when you set <code>reveal: &#39;domain&#39;</code>, and <code>txId</code> when something was actually submitted, which for a repeat claim it was not — or <code>{ ok: false, reason, detail }</code>. Expected refusals are values, not exceptions, and <code>alreadyClaimed</code> is a field, because &quot;has this person already had their benefit&quot; is the question you were asking.</p>
+          <p><code>verifiableDomains()</code> is the third method: the domains your rules name explicitly, minus the ones you have not pinned a DKIM key for.</p>
+          <h2>What it deliberately does not do</h2>
+          <p><strong>It does not decide what the person gets.</strong> It answers &quot;which tier, and is this the first time&quot;. Turning that into a discount, a plan or a badge is your code, and stays your code.</p>
+          <p><strong>It stores nothing.</strong> There is no table to migrate and no cache to run. Codes are self-authenticating, so nothing is written when one is issued; <code>handle</code> is returned to you to store, if you want to store it. Do not store it on the same row as an email address — that recreates the join the blinding exists to prevent.</p>
+          <p><strong>It does not talk to a chain.</strong> Redemption goes through <code>RedemptionClient</code>, an interface with one method. <code>httpRedemptionClient</code> is the supplied implementation: it posts the blinded identity, the campaign and the tier as JSON to <code>POST /api/redeem-identity</code> on a MailProof daemon, with a 180-second default timeout because proving is slow. The daemon in this repo does not serve that route yet — <code>npm run web:dev</code> exposes <code>POST /api/redeem</code>, which takes a whole <code>.eml</code> and streams the demo&#39;s stages back — so until it does, supply your own <code>RedemptionClient</code>. <strong>Quickstart</strong> shows one. Nothing in the SDK assumes the daemon is ours.</p>
+          <h2>The division of labour</h2>
+          <ul>
+          <li><strong>The SDK</strong> — policy. Runs in the integrator&#39;s process. Holds the challenge secret and the blinding key. Decides tiers.</li>
+          <li><strong>The daemon</strong> — chain access, proving and the wallet. <code>npm run web:dev</code>, port 3000. The only component that submits a transaction.</li>
+          <li><strong>The attestor</strong> — signs a canonical <code>ClaimAttestationV1</code> with a Schnorr key. Its verifier is pluggable: in DKIM-direct mode, which is what this repo runs today, it is sent the raw email and checks the message&#39;s own RSA signature; with a pinned ZK Email blueprint it sees only the proof and its public outputs. <code>npm run attestor:dev</code>, port 8787.</li>
+          <li><strong>The contract</strong> — <code>contracts/mailproof.compact</code>. Nine asserts, then one insert into <code>usedNullifiers</code>. Membership in that set is what makes a claim one-time.</li>
+          </ul>
+          <p>An integrator can self-host all four: the daemon and the attestor are processes in this repo, and the contract is deployed per campaign, so it is your instance holding your nullifiers.</p>
+          <p>Something reads the raw message, and the SDK says so on every success: <code>result.trust</code> is <code>{ emailReadBy: &#39;attestor&#39;, cryptographic: true, blindingKeyId }</code>. Through the SDK, the DKIM check runs inside <code>verify()</code> in your own process and only the blinded identity is posted onward; in the daemon&#39;s <code>/api/redeem</code> path — the one the demo and the browser extension use — the message is sent to the attestor. Either way it is not nobody, and the attestor is trusted: if it signs a false claim, the contract accepts it. <strong>Security model</strong> sets out what that costs you.</p>
+          <h2>The smallest real integration</h2>
+          <pre><code class="language-ts">import { createMailProof } from &#39;@mailproof/sdk&#39;
+          import type { RedemptionClient } from &#39;@mailproof/sdk&#39;
+          
+          declare function grantStudentPlan(handle: string): Promise&lt;void&gt;   // yours
+          declare const redemption: RedemptionClient                          // yours, for now
+          
+          const mailproof = createMailProof&lt;&#39;STUDENT&#39;&gt;({
+            audience: &#39;lain&#39;,
+            challengeSecret: Buffer.from(process.env.MAILPROOF_CHALLENGE_SECRET!, &#39;hex&#39;),
+            blindingKey: Buffer.from(process.env.MAILPROOF_BLINDING_KEY!, &#39;hex&#39;),
+            campaign: &#39;2026-S1&#39;,
+            tiers: [{ id: &#39;STUDENT&#39;, suffixes: [&#39;.edu&#39;, &#39;.edu.ar&#39;] }],
+            domainKeys: [{ domain: &#39;udesa.edu.ar&#39;, dnsRecord: &#39;v=DKIM1; k=rsa; p=MIIBIjANBg…&#39; }],
+            redemption,
+          })
+          
+          // Step one: show the person a code.
+          export function start() {
+            const { code, instructions, expiresAt } = mailproof.startVerification()
+            return { code, instructions, expiresAt }
+          }
+          
+          // Step two: take the message back and decide.
+          export async function finish(eml: string) {
+            const result = await mailproof.verify(eml)
+          
+            if (!result.ok) return { granted: false, reason: result.reason, detail: result.detail }
+            if (result.alreadyClaimed) return { granted: false, reason: &#39;ALREADY_CLAIMED&#39; }
+          
+            await grantStudentPlan(result.handle)   // your decision, your database
+            return { granted: true }
+          }
+          </code></pre>
+        </section>
+
+        <section id="quickstart">
+          <h2>Quickstart</h2>
+          <p>From an empty project to a granted tier. Every identifier below exists in the repository; the SDK lives in-tree at <code>packages/sdk</code>, so the imports use that path.</p>
+          <h3>1. What has to be running</h3>
+          <p>Node 22 or later (<code>engines</code> in <code>package.json</code>), then three things, in this order.</p>
+          <pre><code>npm run proof-server:start   # docker compose: node :9944, indexer :8088, proof server :6300
+          npm run attestor:dev         # :8787
+          npm run web:dev              # :3000
+          </code></pre>
+          <p><strong>The attestor</strong> signs a canonical <code>ClaimAttestationV1</code> with Schnorr over Jubjub. In DKIM-direct mode, which is what this repo runs today, it verifies a message&#39;s own RSA-SHA256 DKIM signature; Compact 0.31.1 has no signature or proof verifier builtin, so the chain verifies the attestor&#39;s signature instead of the email&#39;s (D-001). <code>GET /health</code> reports <code>cryptographicVerification</code>, which is <code>false</code> when a fixture verifier is standing in — a fixture-backed deployment cannot look like a real one.</p>
+          <p><strong>The daemon</strong> at <code>:3000</code> owns the chain connection, the wallet, proving and the contract. The SDK is a thin client and touches none of that.</p>
+          <p>One gap to plan around: <code>httpRedemptionClient</code> posts to <code>POST /api/redeem-identity</code>, and the daemon in this repo does not serve that route yet. What it serves today includes <code>/api/redeem</code> (an SSE stream over a raw <code>.eml</code>, driving the pinned-blueprint demo), <code>/api/new-round</code>, <code>/api/state</code> and <code>/api/inspect</code>, alongside the demo&#39;s own <code>/api/sample-eml</code>, <code>/api/demo-eml</code> and wallet-bridge routes. Until the identity route exists, implement the interface yourself — it is one method:</p>
+          <pre><code class="language-ts">import type { RedemptionClient } from &#39;./packages/sdk/index.js&#39;;
+          
+          const spent = new Set&lt;string&gt;();
+          
+          export const redemption: RedemptionClient = {
+            async redeem(request) {
+              // request: { identity: Uint8Array, campaign: string, tier: string }
+              const nullifier = Buffer.from(request.identity).toString(&#39;hex&#39;);
+              const already = spent.has(nullifier);
+              spent.add(nullifier);
+              return {
+                outcome: already ? &#39;already-claimed&#39; : &#39;redeemed&#39;,
+                nullifier,
+                contractAddress: &#39;0200deadbeef&#39;,
+                campaign: request.campaign,
+                ...(already ? {} : { txId: `tx-${spent.size}` }),
+              };
+            },
+          };
+          </code></pre>
+          <p><code>httpRedemptionClient</code> validates the receipt rather than casting it: a response missing a 32-byte hex <code>nullifier</code>, a <code>contractAddress</code> or a <code>campaign</code>, or carrying an unrecognised <code>outcome</code>, is rejected as <code>MALFORMED_RESPONSE</code>, because a wrong shape here becomes a wrongly granted tier. A client you write yourself gets no such check — <code>verify</code> copies <code>receipt.nullifier</code> straight into <code>handle</code> — so apply the same rigour.</p>
+          <h3>2. Two secrets, not one</h3>
+          <pre><code>node -e &quot;console.log(require(&#39;node:crypto&#39;).randomBytes(32).toString(&#39;hex&#39;))&quot;
+          </code></pre>
+          <p>Run it twice. Both values must be at least 32 bytes. A short <code>blindingKey</code> makes <code>createMailProof</code> itself throw a <code>BlindingError</code> at construction, before it can serve a single request; a short <code>challengeSecret</code> makes <code>startVerification</code> throw a <code>ChallengeError</code> with code <code>BAD_SECRET</code>.</p>
+          <p>They are separate because their lifetimes are. <code>challengeSecret</code> authenticates codes that live fifteen minutes by default; rotating it invalidates only the codes in flight, which come back as <code>CHALLENGE_INVALID</code> and are re-minted by the person clicking again. <code>blindingKey</code> keys the hash that turns a mailbox into a handle. Rotating it renames every person on the ledger and silently hands everyone a fresh benefit. That is why <code>trust.blindingKeyId</code> — the first 16 hex characters of an HMAC-SHA256 keyed by the blinding key over a fixed label — is in every success: a rotation becomes visible instead of quiet, and a deployment can refuse to mix two generations.</p>
+          <h3>3. Pinning a domain&#39;s DKIM key</h3>
+          <p>A <code>p=</code> record is the public half of the key a domain signs its outbound mail with. It is a TXT record at <code>&lt;selector&gt;._domainkey.&lt;domain&gt;</code> and looks like <code>v=DKIM1; k=rsa; p=MIIBIjANBg…</code>. Take one message the domain signed and read the signature off it:</p>
+          <pre><code>npx tsx scripts/inspect-eml.ts message.eml --expect-domain udesa.edu.ar
+          </code></pre>
+          <p>The report prints each signature&#39;s <code>d=</code>, <code>s=</code>, and the DNS record name to fetch — <code>google._domainkey.udesa.edu.ar</code>. Then <code>dig +short TXT google._domainkey.udesa.edu.ar</code> and join the quoted chunks into one string.</p>
+          <p><code>config/blueprints.json</code> already does this for the attestor side. The entry <code>flight-cancel-edu-dkim-v1</code> carries <code>dkim.dnsRecord</code> for <code>udesa.edu.ar</code> with <code>selector: &quot;google&quot;</code>, and the attestor verifies against that pinned copy rather than resolving DNS at claim time. Verification therefore does not depend on DNS being up; the cost is that an issuer rotating their key requires re-pinning, and naming the selector means a rotated key fails as &quot;wrong selector&quot; instead of looking like tampering. The <code>status</code> field is load-bearing too: while it is <code>&quot;pending&quot;</code> the ZK Email path refuses to run, because the slug has not been compiled on the registry and accepting proofs against it would mean verifying nothing.</p>
+          <p>The SDK takes the same records in <code>domainKeys</code>. A domain with no pinned key cannot be verified; lookup walks up to the nearest parent that has one, so pinning <code>udesa.edu.ar</code> covers <code>mail.udesa.edu.ar</code>. <code>verifiableDomains()</code> returns the domains your rules name explicitly minus the ones missing a key.</p>
+          <h3>4. The configuration</h3>
+          <pre><code class="language-ts">import { createMailProof } from &#39;./packages/sdk/index.js&#39;;
+          import { redemption } from &#39;./redemption.js&#39;;   // from step 1
+          
+          const challengeSecret = Buffer.from(process.env.MAILPROOF_CHALLENGE_SECRET!, &#39;hex&#39;);
+          const blindingKey = Buffer.from(process.env.MAILPROOF_BLINDING_KEY!, &#39;hex&#39;);
+          
+          export const mailproof = createMailProof&lt;&#39;STUDENT&#39; | &#39;CORPORATE&#39;&gt;({
+            audience: &#39;lain&#39;,                  // bound into every code; a code minted here works nowhere else
+            challengeSecret,
+            blindingKey,
+            campaign: &#39;2026-S1&#39;,               // the period a benefit is granted for
+            tiers: [
+              { id: &#39;STUDENT&#39;, domains: [&#39;udesa.edu.ar&#39;] },                // exact, subdomains included
+              { id: &#39;STUDENT&#39;, suffixes: [&#39;.edu&#39;, &#39;.edu.ar&#39;, &#39;.ac.uk&#39;] },  // label-boundary match
+              { id: &#39;CORPORATE&#39;, notFreeProvider: true },                  // anything not on the free list
+            ],
+            domainKeys: [
+              { domain: &#39;udesa.edu.ar&#39;, dnsRecord: &#39;v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0B…&#39; },
+            ],
+            redemption,                        // swap in httpRedemptionClient once your daemon
+                                               // serves POST /api/redeem-identity
+            maxSignatureAgeMs: 6 * 60 * 60 * 1000,   // default 24h
+            challengeTtlMs: 10 * 60 * 1000,          // default 15m
+            reveal: &#39;tier&#39;,                          // &#39;domain&#39; also returns which domain matched
+          });
+          </code></pre>
+          <p>Rules are tried in order and the first match wins. A domain matching nothing gets no tier — there is no default, because &quot;unrecognised means generic&quot; is how a domain registered this morning collects a benefit.</p>
+          <p><code>notFreeProvider</code> is a friction tax, not an anti-sybil control: <code>FREE_MAIL_PROVIDERS</code> cannot be complete, and a $1/yr domain with catch-all MX defeats it outright. Gate anything that matters on an explicit <code>domains</code> list. <strong>Security model</strong> has the rest of that argument.</p>
+          <h3>5. Two routes</h3>
+          <pre><code class="language-ts">app.post(&#39;/api/verify/start&#39;, async () =&gt; {
+            const { code, expiresAt, instructions } = mailproof.startVerification();
+            return { code, expiresAt: expiresAt.toISOString(), instructions };
+          });
+          </code></pre>
+          <pre><code class="language-json">{
+            &quot;code&quot;: &quot;MP-0733-X0EW-JDBZ-FQ0R&quot;,
+            &quot;expiresAt&quot;: &quot;2026-08-08T03:45:00.000Z&quot;,
+            &quot;instructions&quot;: &quot;Send yourself an email from the address you want to prove, with this code…&quot;
+          }
+          </code></pre>
+          <p>The code is Crockford base32 with an <code>MP-</code> prefix — sixteen characters in four groups, carrying a 4-byte expiry and a 48-bit tag over the audience. Nothing is stored to issue it and nothing is looked up to check it.</p>
+          <pre><code class="language-ts">app.post&lt;{ Body: { eml: string } }&gt;(&#39;/api/verify/finish&#39;, async (request, reply) =&gt; {
+            const result = await mailproof.verify(request.body.eml);
+          
+            if (!result.ok) {
+              return reply.code(422).send({ ok: false, reason: result.reason, detail: result.detail });
+            }
+            if (result.alreadyClaimed) {
+              return { ok: true, tier: result.tier, granted: false, alreadyClaimed: true };
+            }
+          
+            await grant({
+              handle: result.handle,
+              tier: result.tier,
+              campaign: &#39;2026-S1&#39;,
+              blindingKeyId: result.trust.blindingKeyId,
+            });
+          
+            return { ok: true, tier: result.tier, granted: true, alreadyClaimed: false, txId: result.txId };
+          });
+          </code></pre>
+          <p><code>verify</code> never throws for anything expected. A refusal is a value with <code>reason</code> — one of <code>NO_PINNED_KEY</code>, <code>NO_TIER</code>, <code>REDEMPTION_FAILED</code>, or a self-attestation failure such as <code>DOMAIN_NOT_ALIGNED</code>, <code>CHALLENGE_MISSING</code>, <code>SIGNATURE_STALE</code> — and a <code>detail</code> sentence safe to log. All thirteen are enumerated in <strong>API reference</strong>. <code>alreadyClaimed</code> is a field for the same reason: &quot;has this person already had their benefit&quot; is the question you are asking.</p>
+          <h3>6. What to store</h3>
+          <p>Store <code>result.handle</code>: one keyed-hash value per person, stable, and opaque to anyone without your <code>blindingKey</code>. That is what makes &quot;one per person&quot; enforceable without holding a person.</p>
+          <p>Do not put it on the same row as an email address. The nullifier set is public and insert-only, and a bare hash of a mailbox is recoverable by anyone with a wordlist — that is why the value is blinded at all. A row holding both re-creates exactly that join for whoever reads your database later, including the person who breaches it. Store the handle with the tier, the campaign and the <code>blindingKeyId</code>; keep addresses, if you need them at all, in a table that has no handle column.</p>
+          <p>Be clear about what read the message. <code>verify</code> runs the DKIM check in your own process, so the raw bytes are in your server&#39;s memory for the duration of the call; in the daemon pipeline it is the attestor that sees the message. <code>trust.emailReadBy</code> is the constant <code>&#39;attestor&#39;</code> either way. Nothing but hashes reaches the chain.</p>
+          <h3>7. Getting the message back</h3>
+          <p><strong>The extension.</strong> <code>apps/extension</code>, loaded unpacked from <code>chrome://extensions</code> with developer mode on — Chrome 137 dropped <code>--load-extension</code> and now silently ignores it. The manifest pins a <code>key</code>, so the id is always <code>hfajeimcllaejcchhhfifacpaggiilao</code> and the daemon can allow one exact origin. The panel reads the open Gmail message and posts the original bytes to <code>http://127.0.0.1:3000</code> in one click. That capture is the part worth reusing: it holds no keys and makes no proofs.</p>
+          <p><strong>The upload.</strong> Works in any browser and needs nothing installed.</p>
+          <pre><code class="language-html">&lt;input type=&quot;file&quot; accept=&quot;.eml,message/rfc822,text/plain&quot;&gt;
+          </code></pre>
+          <pre><code class="language-js">const eml = await input.files[0].text();
+          const res = await fetch(&#39;/api/verify/finish&#39;, {
+            method: &#39;POST&#39;,
+            headers: { &#39;content-type&#39;: &#39;application/json&#39; },
+            body: JSON.stringify({ eml }),
+          });
+          </code></pre>
+          <p>In Gmail the person uses <strong>Show original → Download Original</strong>. One thing to warn them about: a Gmail message sent to your own Gmail address never leaves Google&#39;s infrastructure and is never DKIM-signed. The proof needs a message that actually crossed a boundary — send it to a second mailbox and export the received copy.</p>
+        </section>
+
+        <section id="api-reference">
+          <h2>API reference</h2>
+          <p>Everything below is exported from <code>packages/sdk/index.ts</code>. The examples import from <code>@mailproof/sdk</code>, the specifier the SDK README uses.</p>
+          <pre><code class="language-ts">import {
+            createMailProof,
+            httpRedemptionClient,
+            RedemptionError,
+            resolveTier,
+            isFreeMailProvider,
+            FREE_MAIL_PROVIDERS,
+          } from &#39;@mailproof/sdk&#39;
+          
+          import type {
+            DomainKey,
+            MailProof,
+            MailProofConfig,
+            TrustDisclosure,
+            VerificationRefusal,
+            VerificationResult,
+            VerificationStart,
+            HttpRedemptionOptions,
+            RedemptionClient,
+            RedemptionOutcome,
+            RedemptionReceipt,
+            RedemptionRequest,
+            TierMatch,
+            TierRule,
+          } from &#39;@mailproof/sdk&#39;
+          </code></pre>
+          <p>Twenty exports: six values and fourteen types. Nothing else is public. In particular <code>SelfAttestationError</code>, <code>BlindingError</code> and <code>ChallengeError</code> are not re-exported, even though the first contributes ten members to <code>VerificationRefusal</code> and the other two can be thrown — see <a href="#what-throws">What throws</a>.</p>
+          <p><strong>One naming note, once.</strong> <code>handle</code> and <code>nullifier</code> on a success are the same string. <code>handle</code> is the name to store it under; <code>nullifier</code> is the ledger&#39;s word for it. The section uses <code>handle</code> when talking about your database and <code>nullifier</code> when talking about the chain.</p>
+          <hr>
+          <h3><code>createMailProof</code></h3>
+          <pre><code class="language-ts">function createMailProof&lt;T extends string&gt;(config: MailProofConfig&lt;T&gt;): MailProof&lt;T&gt;
+          </code></pre>
+          <p><code>T</code> is the union of your tier ids. It is inferred from <code>config.tiers</code>, so <code>tiers: [{ id: &#39;STUDENT&#39;, … }, { id: &#39;CORPORATE&#39;, … }]</code> gives you a <code>MailProof&lt;&#39;STUDENT&#39; | &#39;CORPORATE&#39;&gt;</code> and a <code>result.tier</code> that switches exhaustively.</p>
+          <p><strong>Throws</strong> <code>BlindingError</code> — synchronously, at construction — when <code>blindingKey</code> is shorter than 32 bytes. This is deliberate: it fails at boot rather than on the first user. Nothing else is validated eagerly.</p>
+          <pre><code class="language-ts">export const mailproof = createMailProof({
+            audience: &#39;lain&#39;,
+            challengeSecret: Buffer.from(process.env.MAILPROOF_CHALLENGE_SECRET!, &#39;hex&#39;),
+            blindingKey: Buffer.from(process.env.MAILPROOF_BLINDING_KEY!, &#39;hex&#39;),
+            campaign: &#39;2026-S1&#39;,
+            tiers: [
+              { id: &#39;STUDENT&#39;, domains: [&#39;udesa.edu.ar&#39;] },
+              { id: &#39;STUDENT&#39;, suffixes: [&#39;.edu&#39;, &#39;.edu.ar&#39;] },
+              { id: &#39;CORPORATE&#39;, notFreeProvider: true },
+            ],
+            domainKeys: [
+              { domain: &#39;udesa.edu.ar&#39;, dnsRecord: &#39;v=DKIM1; k=rsa; p=MIIBIjANBg…&#39; },
+            ],
+            redemption: httpRedemptionClient({ baseUrl: &#39;http://127.0.0.1:3000&#39; }),
+            maxSignatureAgeMs: 6 * 60 * 60 * 1000,
+            challengeTtlMs: 10 * 60 * 1000,
+            reveal: &#39;tier&#39;,
+          })
+          </code></pre>
+          <hr>
+          <h3><code>MailProofConfig&lt;T extends string = string&gt;</code></h3>
+          <p>All fields are <code>readonly</code>.</p>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>audience</code></td>
+          <td><code>string</code></td>
+          <td>—</td>
+          <td>Identifies this integrator. Authenticated into every challenge tag, so a code minted here does not verify anywhere else. Changing it invalidates every outstanding code.</td>
+          </tr>
+          <tr>
+          <td><code>challengeSecret</code></td>
+          <td><code>Uint8Array</code></td>
+          <td>—</td>
+          <td>Per-integrator secret for challenge codes. Must be at least 32 bytes. Rotatable: it only invalidates codes in flight.</td>
+          </tr>
+          <tr>
+          <td><code>blindingKey</code></td>
+          <td><code>Uint8Array</code></td>
+          <td>—</td>
+          <td>Key for the keyed hash that turns a mailbox into a handle. Must be at least 32 bytes. <strong>Not</strong> rotatable without consequence: a new key renames every person and hands everyone a second benefit.</td>
+          </tr>
+          <tr>
+          <td><code>tiers</code></td>
+          <td><code>readonly TierRule&lt;T&gt;[]</code></td>
+          <td>—</td>
+          <td>Which domains earn which tier. Evaluated in order; first match wins; no match earns nothing.</td>
+          </tr>
+          <tr>
+          <td><code>domainKeys</code></td>
+          <td><code>readonly DomainKey[]</code></td>
+          <td>—</td>
+          <td>Pinned DKIM public keys. A domain with no pinned key — its own or a parent&#39;s — cannot be verified.</td>
+          </tr>
+          <tr>
+          <td><code>campaign</code></td>
+          <td><code>string</code></td>
+          <td>—</td>
+          <td>The period a benefit is granted for. Passed through to the redemption client on every claim.</td>
+          </tr>
+          <tr>
+          <td><code>redemption</code></td>
+          <td><code>RedemptionClient</code></td>
+          <td>—</td>
+          <td>Where claims are spent.</td>
+          </tr>
+          <tr>
+          <td><code>maxSignatureAgeMs</code></td>
+          <td><code>number</code></td>
+          <td><code>86_400_000</code> (24 h)</td>
+          <td>How old the DKIM signature may be, by its <code>t=</code> tag. A signature with no <code>t=</code> at all is refused as <code>SIGNATURE_STALE</code>; the SDK does not offer the underlying opt-out.</td>
+          </tr>
+          <tr>
+          <td><code>challengeTtlMs</code></td>
+          <td><code>number</code></td>
+          <td><code>900_000</code> (15 min)</td>
+          <td>How long a minted code lives. Must be positive.</td>
+          </tr>
+          <tr>
+          <td><code>reveal</code></td>
+          <td><code>&#39;tier&#39;</code> or <code>&#39;domain&#39;</code></td>
+          <td><code>&#39;tier&#39;</code></td>
+          <td><code>&#39;domain&#39;</code> adds <code>domain</code> to the success result. Anything other than the literal <code>&#39;domain&#39;</code>, including omitting the field, withholds it.</td>
+          </tr>
+          </tbody></table>
+          <p>Two things are <strong>not</strong> configurable and are load-bearing for &quot;one per person&quot;:</p>
+          <ul>
+          <li>Mailbox canonicalisation. <code>verify</code> always folds <code>me+tag@d</code> onto <code>me@d</code>, always lowercases the local part, and always collapses dots for <code>gmail.com</code> and <code>googlemail.com</code>. There is no config field for this.</li>
+          <li><code>allowedDomains</code>. The SDK never sets it; domain policy is <code>tiers</code> and <code>domainKeys</code>, not a third list.</li>
+          </ul>
+          <hr>
+          <h3><code>DomainKey</code></h3>
+          <pre><code class="language-ts">interface DomainKey {
+            readonly domain: string     // the domain whose mail this key signs
+            readonly dnsRecord: string  // the pinned p= record, e.g. &#39;v=DKIM1; k=rsa; p=MIIBIjANBg…&#39;
+          }
+          </code></pre>
+          <p><code>domain</code> is lowercased and stripped of a trailing dot before lookup. Lookup walks up the label chain, so one key pinned for <code>udesa.edu.ar</code> covers <code>mail.udesa.edu.ar</code>. The DNS record is pinned rather than fetched, so verification does not depend on DNS at claim time — and key rotation by the issuer means re-pinning here.</p>
+          <hr>
+          <h3><code>MailProof&lt;T extends string = string&gt;</code></h3>
+          <pre><code class="language-ts">interface MailProof&lt;T extends string = string&gt; {
+            startVerification(now?: Date): VerificationStart
+            verify(eml: string, now?: Date): Promise&lt;VerificationResult&lt;T&gt;&gt;
+            verifiableDomains(): string[]
+          }
+          </code></pre>
+          <h4><code>startVerification(now?: Date): VerificationStart</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Parameter</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Notes</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>now</code></td>
+          <td><code>Date</code></td>
+          <td><code>new Date()</code></td>
+          <td>Injectable clock. Only affects the code&#39;s expiry.</td>
+          </tr>
+          </tbody></table>
+          <p>Mints a code and the instructions that go with it. Stateless — nothing is recorded, and the code carries its own expiry and its own authentication tag. The code is a pure function of <code>challengeSecret</code>, <code>audience</code> and the expiry minute, so two calls inside the same minute return the identical code; it changes when the minute it expires in changes.</p>
+          <p><strong>Throws</strong> <code>ChallengeError</code> with <code>code: &#39;BAD_SECRET&#39;</code> when <code>challengeSecret</code> is under 32 bytes, and <code>code: &#39;MALFORMED&#39;</code> when <code>challengeTtlMs &lt;= 0</code>. Neither class is exported; both are configuration errors that should surface at boot.</p>
+          <pre><code class="language-ts">const { code, expiresAt, instructions } = mailproof.startVerification()
+          </code></pre>
+          <h4><code>verify(eml: string, now?: Date): Promise&lt;VerificationResult&lt;T&gt;&gt;</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Parameter</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Notes</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>eml</code></td>
+          <td><code>string</code></td>
+          <td>—</td>
+          <td>The raw RFC 822 message, exactly as saved. Any re-encoding breaks the body hash.</td>
+          </tr>
+          <tr>
+          <td><code>now</code></td>
+          <td><code>Date</code></td>
+          <td><code>new Date()</code></td>
+          <td>Injectable clock. Used for signature age and code expiry.</td>
+          </tr>
+          </tbody></table>
+          <p>What it does, in order:</p>
+          <ol>
+          <li>Tries each <strong>distinct</strong> <code>dnsRecord</code> in <code>domainKeys</code>, in insertion order, running the full self-attestation check against each. First success wins.</li>
+          <li>Re-checks that a key is pinned for the <code>From:</code> domain, or a parent of it.</li>
+          <li>Resolves a tier from the <code>From:</code> domain — the mailbox domain, not necessarily the signing domain.</li>
+          <li>Blinds the canonical mailbox with <code>blindingKey</code>.</li>
+          <li>Calls <code>redemption.redeem({ identity, campaign, tier })</code>.</li>
+          </ol>
+          <p>Never throws for an expected refusal — see <code>VerificationRefusal</code>. It does reject for a message that is not a message at all: with at least one key pinned, <code>await verify(&#39;From: a@mit.edu&#39;)</code> — no blank line separating headers from body — raises <code>Error: parseEml: no blank line separating headers from body</code>. It is an <code>async</code> method, so catch it with <code>try</code>/<code>await</code>, not around the bare call. With <code>domainKeys: []</code> nothing is parsed at all and the same input returns <code>{ ok: false, reason: &#39;NO_PINNED_KEY&#39; }</code>. Guard the call if you accept arbitrary uploads.</p>
+          <pre><code class="language-ts">const result = await mailproof.verify(eml)
+          
+          if (!result.ok) {
+            log.warn({ reason: result.reason, detail: result.detail })
+            return
+          }
+          
+          if (!result.alreadyClaimed) {
+            await db.grant({ handle: result.handle, tier: result.tier })
+          }
+          </code></pre>
+          <h4><code>verifiableDomains(): string[]</code></h4>
+          <p>The domains this configuration can actually verify: every domain named explicitly in a <code>TierRule.domains</code> array, lowercased, de-duplicated, filtered to those with a pinned key. Suffix rules and <code>notFreeProvider</code> name no domains, so they contribute nothing here.</p>
+          <p>Use it as a startup assertion — a domain in <code>tiers</code> but missing from <code>verifiableDomains()</code> is a rule that can never fire.</p>
+          <pre><code class="language-ts">// tiers: [{ id: &#39;STUDENT&#39;, domains: [&#39;udesa.edu.ar&#39;, &#39;sin-clave.edu.ar&#39;] }]
+          // domainKeys: only udesa.edu.ar
+          mailproof.verifiableDomains() // [&#39;udesa.edu.ar&#39;]
+          </code></pre>
+          <hr>
+          <h3><code>VerificationStart</code></h3>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Notes</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>code</code></td>
+          <td><code>string</code></td>
+          <td><code>MP-XXXX-XXXX-XXXX-XXXX</code> — sixteen Crockford base32 characters, no <code>I</code>, <code>L</code>, <code>O</code> or <code>U</code>, over a 4-byte expiry and a 6-byte HMAC tag. Case-insensitive on the way back, and hyphens, spaces and the usual <code>0</code>/<code>O</code>, <code>1</code>/<code>I</code> substitutions are folded before verification.</td>
+          </tr>
+          <tr>
+          <td><code>expiresAt</code></td>
+          <td><code>Date</code></td>
+          <td>Rounded <strong>up</strong> to the next whole minute, because the expiry travels inside the code at minute resolution. The effective TTL is therefore <code>challengeTtlMs</code> plus up to 59 seconds.</td>
+          </tr>
+          <tr>
+          <td><code>instructions</code></td>
+          <td><code>string</code></td>
+          <td>Ready to show a person, with the code already interpolated. Ends with &quot;We read the domain and nothing else.&quot;</td>
+          </tr>
+          </tbody></table>
+          <hr>
+          <h3><code>VerificationResult&lt;T extends string = string&gt;</code></h3>
+          <p>A discriminated union on <code>ok</code>. Narrow on it before touching anything else.</p>
+          <h4>Success — <code>ok: true</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Present</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>ok</code></td>
+          <td><code>true</code></td>
+          <td>always</td>
+          <td>Discriminant.</td>
+          </tr>
+          <tr>
+          <td><code>tier</code></td>
+          <td><code>T</code></td>
+          <td>always</td>
+          <td>The id of the first <code>TierRule</code> that matched.</td>
+          </tr>
+          <tr>
+          <td><code>handle</code></td>
+          <td><code>string</code></td>
+          <td>always</td>
+          <td>The value to store. Verbatim the <code>nullifier</code> your <code>RedemptionClient</code> returned; with a MailProof daemon that is the campaign-scoped on-chain nullifier, so it is stable per mailbox per campaign per blinding key.</td>
+          </tr>
+          <tr>
+          <td><code>domain</code></td>
+          <td><code>string</code>, optional</td>
+          <td>only when <code>reveal: &#39;domain&#39;</code></td>
+          <td>The <strong>mailbox</strong> domain, not the signing domain: <code>ana@mail.udesa.edu.ar</code> signed by <code>d=udesa.edu.ar</code> reports <code>mail.udesa.edu.ar</code>.</td>
+          </tr>
+          <tr>
+          <td><code>alreadyClaimed</code></td>
+          <td><code>boolean</code></td>
+          <td>always</td>
+          <td><code>true</code> when the ledger already held this nullifier. An outcome, not an error — it is the question you were asking.</td>
+          </tr>
+          <tr>
+          <td><code>nullifier</code></td>
+          <td><code>string</code></td>
+          <td>always</td>
+          <td>The same string as <code>handle</code>.</td>
+          </tr>
+          <tr>
+          <td><code>contractAddress</code></td>
+          <td><code>string</code></td>
+          <td>always</td>
+          <td>The contract the claim was spent against. Worth logging: a claim spent under a different address is a different campaign.</td>
+          </tr>
+          <tr>
+          <td><code>txId</code></td>
+          <td><code>string</code>, optional</td>
+          <td>when the receipt carried one</td>
+          <td>Absent when <code>alreadyClaimed</code> is <code>true</code>, because nothing was submitted.</td>
+          </tr>
+          <tr>
+          <td><code>trust</code></td>
+          <td><code>TrustDisclosure</code></td>
+          <td>always</td>
+          <td>See below.</td>
+          </tr>
+          </tbody></table>
+          <p><code>handle</code> is safe to store. <strong>Do not store it on the same row as an email address</strong> — that recreates exactly the join the blinding exists to prevent.</p>
+          <h4>Refusal — <code>ok: false</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>ok</code></td>
+          <td><code>false</code></td>
+          <td>Discriminant.</td>
+          </tr>
+          <tr>
+          <td><code>reason</code></td>
+          <td><code>VerificationRefusal</code></td>
+          <td>One of thirteen codes. Machine-readable; stable.</td>
+          </tr>
+          <tr>
+          <td><code>detail</code></td>
+          <td><code>string</code></td>
+          <td>One sentence, safe to log and safe to show. Written for a human, not parsed.</td>
+          </tr>
+          </tbody></table>
+          <hr>
+          <h3><code>VerificationRefusal</code></h3>
+          <pre><code class="language-ts">type VerificationRefusal =
+            | &#39;NO_PINNED_KEY&#39;
+            | &#39;NO_TIER&#39;
+            | SelfAttestationError[&#39;failure&#39;]   // the ten below
+            | &#39;REDEMPTION_FAILED&#39;
+          </code></pre>
+          <p><code>SelfAttestationError</code> is not re-exported, so the ten values it contributes are only reachable through this union. The complete list:</p>
+          <table>
+          <thead>
+          <tr>
+          <th><code>reason</code></th>
+          <th>What happened</th>
+          <th>What to do</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>NO_SIGNATURE</code></td>
+          <td>The message carries no <code>DKIM-Signature</code> header at all.</td>
+          <td>Ask for the original, saved from &quot;Show original&quot; or &quot;Download Original&quot; — not a copy-paste of the rendered view.</td>
+          </tr>
+          <tr>
+          <td><code>SIGNATURE_INVALID</code></td>
+          <td>No pinned key verified the message. <code>detail</code> distinguishes a body-hash mismatch (the body changed after signing) from a header mismatch (a signed header changed, or the key is wrong). Also what you get for a domain you never pinned.</td>
+          <td>Ask for an unmodified original. If it recurs for a domain you did pin, re-check the <code>p=</code> record and the selector.</td>
+          </tr>
+          <tr>
+          <td><code>SIGNATURE_EXPIRED</code></td>
+          <td>The signature passed its own <code>x=</code>. Google sets this seven days out.</td>
+          <td>The person resends. Nothing is wrong with your configuration.</td>
+          </tr>
+          <tr>
+          <td><code>SIGNATURE_STALE</code></td>
+          <td>Older than <code>maxSignatureAgeMs</code>, <strong>or</strong> carries no <code>t=</code> at all — an age that cannot be established counts as stale.</td>
+          <td>The person resends. Raise <code>maxSignatureAgeMs</code> only if you have decided an archive is acceptable evidence.</td>
+          </tr>
+          <tr>
+          <td><code>FROM_NOT_SIGNED</code></td>
+          <td><code>h=</code> does not cover <code>From:</code>, the message has no <code>From:</code>, or it carries more <code>From:</code> instances than the signature covers — meaning one was prepended unsigned.</td>
+          <td>Refuse. The third case is the shape of an attack, not of a broken mailer.</td>
+          </tr>
+          <tr>
+          <td><code>FROM_UNPARSEABLE</code></td>
+          <td>The signed <code>From:</code> names no single mailbox: zero, several, an empty group, an address literal, or a malformed local part.</td>
+          <td>Refuse. A nullifier has to stand for one person.</td>
+          </tr>
+          <tr>
+          <td><code>DOMAIN_NOT_ALIGNED</code></td>
+          <td>The signing domain does not cover the <code>From:</code> domain. This is the check that makes <code>From:</code> mean anything — without it, any domain vouches for any mailbox.</td>
+          <td>Refuse. Typically a third-party mailer signing on behalf of an address it does not own.</td>
+          </tr>
+          <tr>
+          <td><code>DOMAIN_NOT_ALLOWED</code></td>
+          <td><strong>Unreachable through this SDK.</strong> The underlying check only raises it when <code>allowedDomains</code> is set, and <code>createMailProof</code> never sets it. It is in the union because the union is the underlying failure type.</td>
+          <td>Handle it for exhaustiveness; treat it as <code>NO_TIER</code>.</td>
+          </tr>
+          <tr>
+          <td><code>CHALLENGE_MISSING</code></td>
+          <td>No <code>MP-…</code> code in the signed subject or the signed plain-text body. The body is read through the MIME decoder and only the octets <code>l=</code> accounts for, so an HTML-only message carries nothing readable.</td>
+          <td>Ask them to put the code in the subject or in plain text.</td>
+          </tr>
+          <tr>
+          <td><code>CHALLENGE_INVALID</code></td>
+          <td>A code was found and did not verify: it expired, it is not a well-formed MailProof code, or it was minted for a different <code>audience</code> or a different <code>challengeSecret</code>. <code>detail</code> names the expiry when that is the cause; the last two are indistinguishable on purpose, because the audience is authenticated rather than compared.</td>
+          <td>Mint a fresh code and start over.</td>
+          </tr>
+          <tr>
+          <td><code>NO_PINNED_KEY</code></td>
+          <td>Either <code>domainKeys</code> is empty, so nothing was tried, or the message verified but no key is pinned for its <code>From:</code> domain or any parent.</td>
+          <td>Your configuration, not the person&#39;s message. Pin the key, or accept that the domain is out of scope.</td>
+          </tr>
+          <tr>
+          <td><code>NO_TIER</code></td>
+          <td>The signature is good and the domain is proven, but no <code>TierRule</code> matched.</td>
+          <td>This is the policy answer &quot;you do not qualify&quot;. Show it as one.</td>
+          </tr>
+          <tr>
+          <td><code>REDEMPTION_FAILED</code></td>
+          <td><code>redemption.redeem</code> threw. <code>detail</code> is the <code>RedemptionError</code> message, or <code>&#39;could not spend the claim&#39;</code> for anything else.</td>
+          <td>Your infrastructure, not the person. Retry; do not deny.</td>
+          </tr>
+          </tbody></table>
+          <p>Retrying a <code>REDEMPTION_FAILED</code> cannot double-spend — the nullifier is deterministic. It can come back as <code>alreadyClaimed: true</code> if the first attempt reached the chain and only the response was lost.</p>
+          <p><strong>Which reason you get.</strong> A message is checked against every signature it carries and every distinct pinned key. Most of those attempts fail immediately, so the reason reported is from the attempt that got <em>furthest</em>, not the last:</p>
+          <pre><code>NO_SIGNATURE &lt; SIGNATURE_INVALID &lt; SIGNATURE_EXPIRED &lt; SIGNATURE_STALE
+            &lt; FROM_NOT_SIGNED &lt; FROM_UNPARSEABLE &lt; DOMAIN_NOT_ALIGNED
+            &lt; DOMAIN_NOT_ALLOWED &lt; CHALLENGE_MISSING &lt; CHALLENGE_INVALID
+          </code></pre>
+          <p>The practical consequence: a well-formed message from a domain you have not pinned reports <code>SIGNATURE_INVALID</code>, not <code>NO_PINNED_KEY</code>. Its signature was offered to your keys and none of them matched.</p>
+          <pre><code class="language-ts">function explain(result: VerificationResult&lt;&#39;STUDENT&#39; | &#39;CORPORATE&#39;&gt;): string {
+            if (result.ok) return `granted: ${result.tier}`
+            switch (result.reason) {
+              case &#39;NO_SIGNATURE&#39;:
+              case &#39;SIGNATURE_INVALID&#39;:
+              case &#39;FROM_NOT_SIGNED&#39;:
+              case &#39;FROM_UNPARSEABLE&#39;:
+              case &#39;DOMAIN_NOT_ALIGNED&#39;:
+              case &#39;DOMAIN_NOT_ALLOWED&#39;:
+                return &#39;That file is not a signed message from your own mailbox.&#39;
+              case &#39;SIGNATURE_EXPIRED&#39;:
+              case &#39;SIGNATURE_STALE&#39;:
+              case &#39;CHALLENGE_MISSING&#39;:
+              case &#39;CHALLENGE_INVALID&#39;:
+                return &#39;Send yourself a new message with a fresh code.&#39;
+              case &#39;NO_PINNED_KEY&#39;:
+              case &#39;NO_TIER&#39;:
+                return &#39;That domain is not one we recognise.&#39;
+              case &#39;REDEMPTION_FAILED&#39;:
+                return &#39;We could not record your claim. Try again shortly.&#39;
+            }
+          }
+          </code></pre>
+          <hr>
+          <h3><code>TrustDisclosure</code></h3>
+          <pre><code class="language-ts">interface TrustDisclosure {
+            readonly emailReadBy: &#39;attestor&#39;
+            readonly cryptographic: boolean
+            readonly blindingKeyId: string
+          }
+          </code></pre>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Value in this build</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>emailReadBy</code></td>
+          <td><code>&#39;attestor&#39;</code></td>
+          <td>fixed literal</td>
+          <td>What read the raw message. The type admits one value.</td>
+          </tr>
+          <tr>
+          <td><code>cryptographic</code></td>
+          <td><code>boolean</code></td>
+          <td>always <code>true</code></td>
+          <td>Whether real cryptography was checked rather than a fixture standing in. <code>verify</code> only returns <code>ok: true</code> after a real RSA-SHA256 check, so there is no path through this API that sets it <code>false</code>.</td>
+          </tr>
+          <tr>
+          <td><code>blindingKeyId</code></td>
+          <td><code>string</code></td>
+          <td>16 lowercase hex characters</td>
+          <td>Which blinding-key generation produced the handle. HMAC-SHA256 keyed by the blinding key over a fixed label, so it cannot be configured to something that does not match, and publishing it is safe.</td>
+          </tr>
+          </tbody></table>
+          <p><strong>Why it is in the return value rather than a README.</strong> A README is read once, by whoever integrates. The disclosure is attached to every success so it travels into logs, into support tickets, and into whatever you show the person — where a claim like &quot;we never see your address&quot; can be checked against what actually happened rather than against what the docs said in 2026.</p>
+          <p>Two honest notes:</p>
+          <ul>
+          <li><code>emailReadBy</code> is a constant, not a measurement. When you call <code>verify()</code> in-process, the raw bytes are in <strong>your</strong> process while it runs; the field names the trust boundary of the deployment the SDK is built for, not the memory the string was in. <strong>Security model</strong> works through both paths.</li>
+          <li><code>blindingKeyId</code> is the only way a rotation becomes visible. Store it next to the handle and refuse to mix generations.</li>
+          </ul>
+          <hr>
+          <h3><code>RedemptionClient</code></h3>
+          <pre><code class="language-ts">interface RedemptionClient {
+            redeem(request: RedemptionRequest): Promise&lt;RedemptionReceipt&gt;
+          }
+          </code></pre>
+          <p>The seam between policy and chain. Implement it to point at a MailProof daemon you run, or at a test double — nothing in the SDK assumes otherwise. <code>verify</code> does not validate what you return, so a client of your own that returns junk produces a success with a junk handle.</p>
+          <p><code>already-claimed</code> must be returned as a receipt, not thrown. It is the answer the caller most often wants, and throwing for it pushes every integrator into a try/catch that treats the normal case as exceptional.</p>
+          <h4><code>RedemptionRequest</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>identity</code></td>
+          <td><code>Uint8Array</code></td>
+          <td>The blinded identity: 32 bytes, one per mailbox per blinding key, unguessable without that key. Not campaign-scoped — the campaign is a separate field, and the on-chain nullifier is derived from both.</td>
+          </tr>
+          <tr>
+          <td><code>campaign</code></td>
+          <td><code>string</code></td>
+          <td>Straight from <code>MailProofConfig.campaign</code>.</td>
+          </tr>
+          <tr>
+          <td><code>tier</code></td>
+          <td><code>string</code></td>
+          <td>The tier being granted, recorded so a claim cannot be re-scoped later.</td>
+          </tr>
+          </tbody></table>
+          <h4><code>RedemptionOutcome</code></h4>
+          <pre><code class="language-ts">type RedemptionOutcome = &#39;redeemed&#39; | &#39;already-claimed&#39;
+          </code></pre>
+          <h4><code>RedemptionReceipt</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Required</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>outcome</code></td>
+          <td><code>RedemptionOutcome</code></td>
+          <td>yes</td>
+          <td>Becomes <code>alreadyClaimed</code> on the result.</td>
+          </tr>
+          <tr>
+          <td><code>nullifier</code></td>
+          <td><code>string</code></td>
+          <td>yes</td>
+          <td>The nullifier the chain holds. Becomes both <code>nullifier</code> and <code>handle</code>.</td>
+          </tr>
+          <tr>
+          <td><code>contractAddress</code></td>
+          <td><code>string</code></td>
+          <td>yes</td>
+          <td>Surfaced on the result.</td>
+          </tr>
+          <tr>
+          <td><code>campaign</code></td>
+          <td><code>string</code></td>
+          <td>yes</td>
+          <td>Echoed back. Validated by <code>httpRedemptionClient</code>, but <strong>not</strong> surfaced on <code>VerificationResult</code>.</td>
+          </tr>
+          <tr>
+          <td><code>txId</code></td>
+          <td><code>string</code></td>
+          <td>no</td>
+          <td>Absent when <code>outcome</code> is <code>&#39;already-claimed&#39;</code> — nothing was submitted.</td>
+          </tr>
+          <tr>
+          <td><code>blockHeight</code></td>
+          <td><code>number</code></td>
+          <td>no</td>
+          <td>Not surfaced on <code>VerificationResult</code> either.</td>
+          </tr>
+          </tbody></table>
+          <pre><code class="language-ts">const inMemory: RedemptionClient = {
+            async redeem(request) {
+              const nullifier = Buffer.from(request.identity).toString(&#39;hex&#39;)
+              const already = spent.has(nullifier)
+              spent.add(nullifier)
+              return {
+                outcome: already ? &#39;already-claimed&#39; : &#39;redeemed&#39;,
+                nullifier,
+                contractAddress: &#39;c0ffee&#39;,
+                campaign: request.campaign,
+                ...(already ? {} : { txId: `tx-${spent.size}` }),
+              }
+            },
+          }
+          </code></pre>
+          <hr>
+          <h3><code>httpRedemptionClient</code></h3>
+          <pre><code class="language-ts">function httpRedemptionClient(options: HttpRedemptionOptions): RedemptionClient
+          </code></pre>
+          <p>A thin client for a MailProof daemon. The daemon owns the chain connection, the proving and the wallet. Note the gap described in <strong>Quickstart</strong>: the daemon in this repo does not serve <code>/api/redeem-identity</code> yet.</p>
+          <h4><code>HttpRedemptionOptions</code></h4>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Notes</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>baseUrl</code></td>
+          <td><code>string</code></td>
+          <td>—</td>
+          <td>Base URL of the daemon. A trailing slash is stripped.</td>
+          </tr>
+          <tr>
+          <td><code>token</code></td>
+          <td><code>string</code></td>
+          <td>none</td>
+          <td>Sent as <code>authorization: Bearer &lt;token&gt;</code>. Omit on loopback; set it anywhere else.</td>
+          </tr>
+          <tr>
+          <td><code>timeoutMs</code></td>
+          <td><code>number</code></td>
+          <td><code>180_000</code></td>
+          <td>Deliberately generous. Proving takes tens of seconds, and a stingy timeout turns a slow block into a lost grant the chain nonetheless recorded.</td>
+          </tr>
+          <tr>
+          <td><code>fetch</code></td>
+          <td><code>typeof globalThis.fetch</code></td>
+          <td><code>globalThis.fetch</code></td>
+          <td>Injectable for tests and for a proxied runtime.</td>
+          </tr>
+          </tbody></table>
+          <p><strong>Wire format.</strong> <code>POST {baseUrl}/api/redeem-identity</code>, <code>content-type: application/json</code>, body <code>{ identity, campaign, tier }</code> where <code>identity</code> is the 32 bytes as 64 lowercase hex characters with no <code>0x</code> prefix. The response is validated rather than cast — a wrong shape here would become a wrongly granted tier.</p>
+          <pre><code class="language-ts">const client = httpRedemptionClient({
+            baseUrl: &#39;https://mailproof.internal&#39;,
+            token: process.env.MAILPROOF_TOKEN,
+            timeoutMs: 240_000,
+          })
+          </code></pre>
+          <hr>
+          <h3><code>RedemptionError</code></h3>
+          <pre><code class="language-ts">class RedemptionError extends Error {
+            readonly code: &#39;UNREACHABLE&#39; | &#39;REJECTED&#39; | &#39;MALFORMED_RESPONSE&#39;
+            constructor(message: string, code: &#39;UNREACHABLE&#39; | &#39;REJECTED&#39; | &#39;MALFORMED_RESPONSE&#39;)
+          }
+          </code></pre>
+          <p><code>name</code> is <code>&#39;RedemptionError&#39;</code>. The only error <code>httpRedemptionClient.redeem</code> throws.</p>
+          <table>
+          <thead>
+          <tr>
+          <th><code>code</code></th>
+          <th>Raised when</th>
+          <th>What it means</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>UNREACHABLE</code></td>
+          <td><code>fetch</code> rejected or the <code>timeoutMs</code> abort fired.</td>
+          <td>The daemon is down, unroutable, or slower than the timeout. Nothing was necessarily left unspent — a timeout can hide a transaction that landed.</td>
+          </tr>
+          <tr>
+          <td><code>REJECTED</code></td>
+          <td>The daemon answered with a non-2xx status <strong>and</strong> a JSON body: the body is parsed before the status is examined. The message quotes <code>body.error</code> when the JSON has one, otherwise <code>HTTP &lt;status&gt;</code>.</td>
+          <td>The daemon understood and refused: bad token, unknown campaign, unknown tier.</td>
+          </tr>
+          <tr>
+          <td><code>MALFORMED_RESPONSE</code></td>
+          <td>The body is not JSON — which includes a proxy&#39;s HTML 502 or an empty 401, so those arrive here rather than as <code>REJECTED</code>; or it is not an object; or it has an unrecognised <code>outcome</code>; or <code>nullifier</code> is not 32 bytes of hex; or <code>contractAddress</code> or <code>campaign</code> is missing or empty.</td>
+          <td>The thing at that URL is not a MailProof daemon, or its version disagrees with yours.</td>
+          </tr>
+          </tbody></table>
+          <p>Reaching <code>verify</code>, all three collapse into <code>reason: &#39;REDEMPTION_FAILED&#39;</code> with the error&#39;s message as <code>detail</code>. Catch <code>RedemptionError</code> directly only when you call a redemption client yourself.</p>
+          <pre><code class="language-ts">try {
+            await client.redeem({ identity, campaign: &#39;2026-S1&#39;, tier: &#39;STUDENT&#39; })
+          } catch (error) {
+            if (error instanceof RedemptionError &amp;&amp; error.code === &#39;UNREACHABLE&#39;) {
+              // retry; the claim is not lost
+            }
+          }
+          </code></pre>
+          <hr>
+          <h3><code>TierRule&lt;T extends string = string&gt;</code></h3>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>id</code></td>
+          <td><code>T</code></td>
+          <td>—</td>
+          <td>What this rule grants.</td>
+          </tr>
+          <tr>
+          <td><code>domains</code></td>
+          <td><code>readonly string[]</code></td>
+          <td>none</td>
+          <td>Exact domains, matched including subdomains. <code>udesa.edu.ar</code> covers <code>mail.udesa.edu.ar</code> and never <code>notudesa.edu.ar</code>.</td>
+          </tr>
+          <tr>
+          <td><code>suffixes</code></td>
+          <td><code>readonly string[]</code></td>
+          <td>none</td>
+          <td>Suffixes such as <code>.edu.ar</code>, matched on label boundaries only. <code>.edu.ar</code> covers <code>udesa.edu.ar</code> and never <code>notaedu.ar</code>. A leading dot is optional.</td>
+          </tr>
+          <tr>
+          <td><code>notFreeProvider</code></td>
+          <td><code>boolean</code></td>
+          <td><code>false</code></td>
+          <td>Matches any domain not in <code>FREE_MAIL_PROVIDERS</code> or <code>alsoFreeProviders</code>.</td>
+          </tr>
+          <tr>
+          <td><code>alsoFreeProviders</code></td>
+          <td><code>readonly string[]</code></td>
+          <td><code>[]</code></td>
+          <td>Extra domains to treat as free. Only consulted by the <code>notFreeProvider</code> branch.</td>
+          </tr>
+          </tbody></table>
+          <p>Within one rule the branches are tried <code>domains</code>, then <code>suffixes</code>, then <code>notFreeProvider</code>, and the <code>reason</code> reported names whichever fired. Across rules, the first match in array order wins, so an explicit domain beats a suffix and a suffix beats a catch-all. A domain matching nothing gets no tier — there is no default, because &quot;unrecognised means generic&quot; is how a domain registered this morning collects a benefit.</p>
+          <p><code>notFreeProvider</code> is a friction tax on casual farming, not an anti-sybil control. A $1/yr domain with catch-all MX defeats it outright. Anything that actually matters should be gated on <code>domains</code>; <strong>Security model</strong> explains why the gap cannot be closed from this side.</p>
+          <h3><code>TierMatch&lt;T extends string = string&gt;</code></h3>
+          <table>
+          <thead>
+          <tr>
+          <th>Field</th>
+          <th>Type</th>
+          <th>Meaning</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>id</code></td>
+          <td><code>T</code></td>
+          <td>The tier granted.</td>
+          </tr>
+          <tr>
+          <td><code>ruleIndex</code></td>
+          <td><code>number</code></td>
+          <td>Which rule matched, by index into the array you passed.</td>
+          </tr>
+          <tr>
+          <td><code>reason</code></td>
+          <td><code>&#39;domain&#39;</code>, <code>&#39;suffix&#39;</code> or <code>&#39;not-free-provider&#39;</code></td>
+          <td>Why it matched. For logs and for your own audit trail.</td>
+          </tr>
+          </tbody></table>
+          <h3><code>resolveTier</code></h3>
+          <pre><code class="language-ts">function resolveTier&lt;T extends string&gt;(
+            domain: string,
+            rules: readonly TierRule&lt;T&gt;[],
+          ): TierMatch&lt;T&gt; | null
+          </code></pre>
+          <p>The tier a domain earns, or <code>null</code>. <code>domain</code> is lowercased and stripped of a trailing dot first; an empty domain returns <code>null</code>. Never throws. This is the same function <code>verify</code> uses, so calling it directly is how you preview a policy without an email.</p>
+          <pre><code class="language-ts">const rules = [
+            { id: &#39;STUDENT&#39;, suffixes: [&#39;.edu.ar&#39;] },
+            { id: &#39;CORPORATE&#39;, notFreeProvider: true },
+          ] as const
+          
+          resolveTier(&#39;mail.udesa.edu.ar&#39;, rules)
+          // { id: &#39;STUDENT&#39;, ruleIndex: 0, reason: &#39;suffix&#39; }
+          resolveTier(&#39;gmail.com&#39;, rules)      // null
+          resolveTier(&#39;mercadolibre.com&#39;, rules)
+          // { id: &#39;CORPORATE&#39;, ruleIndex: 1, reason: &#39;not-free-provider&#39; }
+          </code></pre>
+          <h3><code>isFreeMailProvider</code></h3>
+          <pre><code class="language-ts">function isFreeMailProvider(domain: string, extra?: readonly string[]): boolean
+          </code></pre>
+          <table>
+          <thead>
+          <tr>
+          <th>Parameter</th>
+          <th>Type</th>
+          <th>Default</th>
+          <th>Notes</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>domain</code></td>
+          <td><code>string</code></td>
+          <td>—</td>
+          <td>Lowercased and stripped of a trailing dot before comparison.</td>
+          </tr>
+          <tr>
+          <td><code>extra</code></td>
+          <td><code>readonly string[]</code></td>
+          <td><code>[]</code></td>
+          <td>Additional domains to treat as free, on top of the built-in list.</td>
+          </tr>
+          </tbody></table>
+          <p><code>true</code> for a domain in either list, and for any subdomain of one — a subdomain of a free provider is still that provider. Never throws.</p>
+          <h3><code>FREE_MAIL_PROVIDERS</code></h3>
+          <pre><code class="language-ts">const FREE_MAIL_PROVIDERS: readonly string[]
+          </code></pre>
+          <p>52 domains: the large webmail providers, the privacy-first independents, the big regional providers, and a sample of disposable-mail services.</p>
+          <p>This list cannot be complete and must not be relied on as if it were. It is a floor, not a fence. New disposable domains appear daily, and a cheap domain with catch-all MX is not on it and never will be.</p>
+          <hr>
+          <h3>What throws</h3>
+          <table>
+          <thead>
+          <tr>
+          <th>Call</th>
+          <th>Throws</th>
+          <th>When</th>
+          </tr>
+          </thead>
+          <tbody><tr>
+          <td><code>createMailProof</code></td>
+          <td><code>BlindingError</code> (not exported)</td>
+          <td><code>blindingKey</code> under 32 bytes.</td>
+          </tr>
+          <tr>
+          <td><code>startVerification</code></td>
+          <td><code>ChallengeError</code> (not exported), <code>code: &#39;BAD_SECRET&#39;</code></td>
+          <td><code>challengeSecret</code> under 32 bytes.</td>
+          </tr>
+          <tr>
+          <td><code>startVerification</code></td>
+          <td><code>ChallengeError</code>, <code>code: &#39;MALFORMED&#39;</code></td>
+          <td><code>challengeTtlMs &lt;= 0</code>.</td>
+          </tr>
+          <tr>
+          <td><code>verify</code></td>
+          <td>rejects with an <code>Error</code> from the message parser</td>
+          <td>At least one key is pinned and the input is not a parseable message — for instance, no blank line between headers and body.</td>
+          </tr>
+          <tr>
+          <td><code>verify</code></td>
+          <td>nothing else</td>
+          <td>Every expected failure is a <code>VerificationResult</code> with <code>ok: false</code>. Anything the <code>RedemptionClient</code> throws is caught and becomes <code>REDEMPTION_FAILED</code>.</td>
+          </tr>
+          <tr>
+          <td><code>httpRedemptionClient(...).redeem</code></td>
+          <td><code>RedemptionError</code></td>
+          <td>Only. See the code table above.</td>
+          </tr>
+          </tbody></table>
+          <p>A short <code>challengeSecret</code> reaches <code>verify</code> too, but only after the signature has verified and a code has been found — at which point it surfaces as <code>CHALLENGE_INVALID</code> rather than throwing. Validate secret lengths at boot and the question does not arise.</p>
+        </section>
+
+        <section id="security">
+          <h2>Security model</h2>
+          <h3>What a successful verification asserts</h3>
+          <p>A <code>result.ok === true</code> from <code>verify()</code> asserts three things and nothing else:</p>
+          <ol>
+          <li>Some party controls a mailbox at a domain you pinned a DKIM key for — at the moment that message was signed.</li>
+          <li>That message was written for your site, recently: it carries a challenge code that authenticates under your <code>challengeSecret</code> and your <code>audience</code>, and the DKIM signature is inside your age bound.</li>
+          <li>The blinded identity derived from that mailbox either had, or had not, already been spent in this campaign.</li>
+          </ol>
+          <p>It does not assert that the person is still enrolled, still employed, or a distinct human being. It does not assert that the party who submitted the <code>.eml</code> is the person who opened your signup page. Possession of the bytes is possession of the proof, for as long as the code lives.</p>
+          <h3>The trust boundary</h3>
+          <p>There is one, it is not hidden, and it is large.</p>
+          <p>Something reads the raw message. Verifying the provider&#39;s RSA-SHA256 signature requires the message, so it cannot be otherwise. When you call <code>verify()</code>, that something is your own process: the DKIM check runs in-process and the only thing that leaves is the blinded identity. When a person uploads the <code>.eml</code> to the daemon instead — the demo&#39;s and the extension&#39;s path — the attestor reads it, which is the mode D-007 describes and the one this repo runs in. The SDK stamps <code>trust: { emailReadBy: &#39;attestor&#39;, … }</code> on every success regardless; it is a fixed literal in the return value, not a measurement of where the bytes went.</p>
+          <p>The attestor holds the Schnorr key that <code>mailproof.compact</code> pins into <code>attestorPublicKey</code> at construction. <code>redeemClaim</code> runs nine asserts and not one of them looks at an email: one checks the claim encoding, four check it against values pinned at construction, one binds it to the caller&#39;s private subject secret, two check the attestor&#39;s signature, and one checks that the nullifier is unspent. If the attestor signs a false claim, the contract accepts it. There is no rotation circuit and no pause circuit; the pinned key is pinned for the life of the deployment.</p>
+          <pre><code class="language-ts">const result = await mailproof.verify(eml)
+          if (result.ok) {
+            result.trust // { emailReadBy: &#39;attestor&#39;, cryptographic: true, blindingKeyId: &#39;4f2a…&#39; }
+          }
+          </code></pre>
+          <p>The correct response is to run your own daemon and point at it:</p>
+          <pre><code class="language-ts">redemption: httpRedemptionClient({ baseUrl: &#39;https://mailproof.internal.example&#39;, token })
+          </code></pre>
+          <p>Nothing in the SDK assumes the daemon is ours. If you point at someone else&#39;s, you have accepted them as the authority on whether a claim is spent, and as the holder of the key the contract trusts.</p>
+          <h3><code>From:</code>, not <code>To:</code></h3>
+          <p>The design that reads <code>To:</code> is unsound, and the attack is cheap. DKIM signs what the sender wrote, and the sender chose the recipient. Anyone who can sign for a domain can therefore mint a message addressed to any mailbox they invent inside it — including a colleague&#39;s — and pre-burn that slot at no cost. On an insert-only nullifier set there is no way to give it back.</p>
+          <p><code>From:</code> inverts the requirement. A provider will not sign a message claiming to come from a mailbox the sender does not control; that is what DKIM alignment is for and what DMARC checks. So <code>verifySelfAttestation</code> requires the signature to cover <code>From:</code>, takes the bottom-most instance (RFC 6376 §5.4.2 consumes instances bottom-up), and refuses outright when the message carries more <code>From:</code> instances than <code>h=</code> covered — an unsigned prepended header is <code>FROM_NOT_SIGNED</code>, not a guess. <code>domainAligns</code> then requires the signing domain to be the mailbox domain or a parent of it: <code>udesa.edu.ar</code> vouches for <code>mail.udesa.edu.ar</code> and for nothing called <code>notudesa.edu.ar</code> or <code>udesa.edu.ar.evil.com</code>.</p>
+          <p>The code is read only from signed material: the covered <code>Subject:</code>, and the body truncated to the octets <code>l=</code> accounts for, decoded through each part&#39;s declared <code>Content-Transfer-Encoding</code>. Searching transfer-encoded bytes lets a quoted-printable soft break fabricate a line boundary that was never signed.</p>
+          <h3>What the challenge code buys</h3>
+          <p>A code is <code>MP-</code> plus a 4-byte expiry and a 48-bit HMAC tag over <code>(audience, expiry)</code>. It buys three things: the message was composed for this verification rather than found; it was composed for <em>your</em> audience, so a code minted for another site fails as a forgery rather than as a mismatch; and evidence that would otherwise never go stale acquires an expiry. Default TTL is 15 minutes.</p>
+          <p>It does not buy single use. Verification is stateless by design — there is no table to look up, and the code is a deterministic function of the secret, the audience and the expiry minute — so a code can be presented more than once inside its window. It does not buy liveness of a particular human either: a forwarded or stolen <code>.eml</code> carrying a valid code verifies. What stops the second submission mattering is the nullifier, not the code.</p>
+          <h3>The freshness bound</h3>
+          <p>This project pins the <code>p=</code> record instead of resolving it. That removes DNS availability from the claim path, and it also means a rotated or revoked key keeps verifying forever. Without an age bound, a 2014 archive is evidence in 2026 and a breach dump is a farm. <code>dkim-freshness.test.ts</code> shows exactly that: a fourteen-year-old signature verifying, <code>stale: false</code>, because nobody asked for a bound.</p>
+          <p>So <code>maxSignatureAgeMs</code> defaults to 24 hours, and staleness is kept distinct from invalidity — the signature is genuine, it is the age that is refused, and reporting &quot;signature mismatch&quot; for an untampered message sends people after a bug that is not there. A signature with no <code>t=</code> at all is stale by default, since its age cannot be established. A future <code>t=</code> is not stale: clock skew is common and a future timestamp only makes the evidence younger.</p>
+          <h3>Why the identity is blinded</h3>
+          <p>The nullifier set is public and insert-only, and mailboxes are enumerable. <code>blinding.test.ts</code> runs the attack rather than describing it: it publishes an unkeyed hash of <code>anademo@gmail.com</code>, hashes a candidate list against it, and recovers the exact victim. The same attack against <code>blindIdentity</code> under a different key finds nothing.</p>
+          <p><code>blindIdentity</code> is HMAC-SHA256 under a key of at least 32 bytes, domain-separated with <code>MAILPROOF:BLINDED-IDENTITY:V1</code>, folded to 32 bytes. It keeps the <em>ledger</em> opaque. It does nothing about the key holder: anyone with <code>blindingKey</code> — which, through the SDK, is you — can recompute the mapping for any address they can guess. Rotating the key renames every person and silently hands everyone a second benefit, which is why <code>blindingKeyId</code> is published: so a rotation is visible instead of quiet.</p>
+          <p>One consequence worth stating: the daemon receives the same blinded identity for the same person across campaigns, since <code>blindIdentity</code> takes only the mailbox and the key. The on-chain nullifier is campaign-scoped; the identity you hand the daemon is not.</p>
+          <h3>Canonicalisation is a security control</h3>
+          <p>&quot;One per person&quot; is only as good as the function from a header field to a mailbox, so <code>mailbox.ts</code> parses the RFC 5322 grammar and discards everything an adversary writes. Quoted strings and comments are masked before any index arithmetic runs, so:</p>
+          <ul>
+          <li><code>&quot;evil@harvard.edu&quot; &lt;me@gmail.com&gt;</code> yields <code>me@gmail.com</code>. A regex hunting for <code>@</code> grants a university tier to a Gmail account.</li>
+          <li><code>me@gmail.com (evil@harvard.edu)</code> and <code>(evil@harvard.edu) me@gmail.com</code> likewise.</li>
+          <li><code>&quot;a,b&lt;c&gt;d:e;&quot; &lt;me@gmail.com&gt;</code> is one mailbox; the structural characters are inert.</li>
+          <li><code>a@x.com, b@y.com</code> and <code>Team: a@x.com, b@y.com;</code> are refused — &quot;the first recipient&quot; is the sender&#39;s choice, not a fact about the claimant.</li>
+          <li><code>undisclosed-recipients:;</code> names nobody and is refused.</li>
+          <li><code>me(a(nested)comment)@gmail.com</code>, <code>ana@[192.0.2.1]</code>, <code>ana@localhost</code>, <code>ana@a..b.com</code> and <code>+tag@gmail.com</code> all fail closed.</li>
+          </ul>
+          <p>Folding runs the other way: <code>anademo@</code>, <code>AnaDemo@</code>, <code>a.n.a.d.e.m.o@</code> and <code>anademo+lain@gmail.com</code> are one person, and <code>ana@ÜNI.example</code> is <code>ana@xn--ni-wka.example</code>. Dot-collapsing applies only to <code>gmail.com</code>, <code>googlemail.com</code> and domains you name, because applying it to a domain that distinguishes <code>a.b@</code> from <code>ab@</code> merges two colleagues into one nullifier and locks the second out permanently.</p>
+          <h3>What is not covered</h3>
+          <ul>
+          <li><strong>Catch-all domains.</strong> A person who owns a domain and its DKIM key can sign <code>From:</code> any local part in it, so they own unboundedly many mailboxes and unboundedly many nullifiers. <code>notFreeProvider</code> does not touch this: it is a friction tax on casual farming, not an anti-sybil control, and a $1/yr domain with catch-all MX defeats it outright. Anything that matters must be gated on an explicit domain list — and then it is only as strong as that institution&#39;s own mailbox issuance.</li>
+          <li><strong>Shared mailboxes.</strong> <code>admissions@</code>, <code>info@</code>, a team alias: one mailbox, one nullifier, many people. Whoever spends it spends it for all of them, and nothing in the evidence distinguishes them.</li>
+          <li><strong>Alumni and leavers.</strong> DKIM proves the mailbox is controlled now. It says nothing about entitlement, and there is no revocation channel — once a message is signed, the domain cannot withdraw what it supports. An address that outlives enrolment keeps earning the tier. The only real lever is a short campaign.</li>
+          <li><strong>Griefing an insert-only set.</strong> <code>usedNullifiers</code> supports <code>member</code> and <code>insert</code>; there is no removal, no pause, no attestor rotation. A slot burned in error or in malice stays burned for the life of that campaign. The remedy is a new campaign — which resets everyone, including whoever caused it.</li>
+          <li><strong>The off-curve announcement.</strong> <code>redeemClaim</code> range-checks the signature scalar so a bad one rejects cleanly, but <code>sig.announcement</code> gets no equivalent guard and cannot: Compact 0.31.1 exposes no on-curve predicate and <code>JubjubPoint</code> is opaque. <code>R = (1,1)</code> and <code>R = (0,0)</code> fail with <code>unreachable</code>, which is not one of the stable error codes. The cost is a clear error message, not soundness — <code>c = H(R, P, m)</code> still binds <code>R</code>.</li>
+          <li><strong>Metadata.</strong> A chain observer sees the contract, the circuit called, the timing, the nullifier and the claim count. Repeated use of the same subject binding within a campaign is linkable.</li>
+          </ul>
+          <h3>Malicious integrator versus malicious attestor</h3>
+          <p>A malicious integrator gets very little <em>from the protocol</em>. The return value carries no address — the SDK&#39;s own test asserts that neither the local part nor the domain appears anywhere in it — and what goes to the daemon is 32 blinded bytes, the campaign name and the tier id. <code>reveal: &#39;tier&#39;</code> means they learn &quot;is a student&quot;; <code>reveal: &#39;domain&#39;</code> is the larger ask and should be justified. Be clear about the one thing the SDK cannot enforce: <code>verify(eml)</code> runs in the caller&#39;s process, so whichever party calls it holds the raw message for the duration of that call, and holds the blinding key permanently. The guarantee is that nothing downstream — the handle you store, the ledger, any later reader of your database — carries an address. It is not a guarantee against a party that already has the message in hand. Store <code>result.handle</code>, and never on the same row as an email address; doing so recreates precisely the join the blinding exists to prevent.</p>
+          <p>A malicious attestor can do a great deal. In DKIM-direct mode it reads every message sent to it. It never receives your blinding key — <code>httpRedemptionClient</code> posts only the blinded identity, the campaign and the tier — so it cannot test a guessed address against the set, but it can link one person across campaigns, because the identity it is handed is not campaign-scoped. And it holds the signing key the contract pins, so it can mint claims for identities that never existed and burn nullifiers belonging to people who never showed up. No assert in the circuit stands between it and any of that. Run your own.</p>
+        </section>
+      </main>
+    </div>
+
+    <footer>
+      <div class="page row">
+        <div>
+          <strong style="font-family: var(--serif); font-size: 19px">MailProof</strong>
+          <p style="margin: 6px 0 0">Built on Midnight. Apache&nbsp;2.0.</p>
+        </div>
+        <div>
+          <a href="index.html">Home</a> ·
+          <a href="https://github.com/NachoEstevo/mailproof">Repository</a>
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      // Highlight the section being read. IntersectionObserver rather than a
+      // scroll handler, so it costs nothing while scrolling.
+      const links = new Map(
+        [...document.querySelectorAll('.toc a[href^="#"]')].map((a) => [a.hash.slice(1), a]),
+      );
+      const visible = new Set();
+      const observer = new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) visible.add(entry.target.id);
+            else visible.delete(entry.target.id);
+          }
+          // Only the topmost visible section is marked, or every section on a
+          // short page lights up at once and the sidebar stops meaning anything.
+          const current = [...links.keys()].find((id) => visible.has(id));
+          for (const [id, link] of links) link.classList.toggle('active', id === current);
+        },
+        { rootMargin: '-96px 0px -68% 0px' },
+      );
+      for (const id of links.keys()) {
+        const section = document.getElementById(id);
+        if (section) observer.observe(section);
+      }
+    </script>
+  </body>
+</html>
