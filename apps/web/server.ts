@@ -216,8 +216,37 @@ async function main(): Promise<void> {
     networkConfig,
     seed: getOrCreateWallet(network).seed,
   });
-  await walletCtx.wallet.waitForSyncedState();
-  await persistWalletState(network, walletCtx);
+  /**
+   * The wallet syncs in the background, and the server does not wait for it.
+   *
+   * A first sync against a public network takes minutes, and a platform that
+   * health-checks a port gives up long before that — so blocking the listen
+   * on it means the container is killed for being slow at a thing that was
+   * always going to be slow. Nothing can be spent until it finishes, and
+   * `/api/state` says so, which is a far better failure than a dead port.
+   */
+  let walletReady = false;
+  let walletError: string | undefined;
+  const walletSynced = walletCtx.wallet
+    .waitForSyncedState()
+    .then(async () => {
+      await persistWalletState(network, walletCtx);
+      walletReady = true;
+      console.log('  wallet synced');
+    })
+    .catch((error: unknown) => {
+      walletError = error instanceof Error ? error.message : 'wallet sync failed';
+      console.error('wallet sync failed:', error);
+    });
+
+  /** Anything that spends waits here first, and says why if it never arrives. */
+  const requireWallet = async (): Promise<void> => {
+    if (walletReady) return;
+    await walletSynced;
+    if (!walletReady) {
+      throw new Error(walletError ?? 'the wallet is still syncing with the chain');
+    }
+  };
 
   const walletProvider = new DelegatingWalletProvider(serverWalletProvider(walletCtx));
   const providers = await createProviders(walletCtx, walletProvider);
@@ -355,6 +384,8 @@ async function main(): Promise<void> {
     const health = await fetchHealth(config.attestorUrl).catch(() => null);
     return {
       network,
+      walletReady,
+      ...(walletError ? { walletError } : {}),
       contractAddress: round.address,
       campaign: round.campaign,
       claimType: config.claimTypeName,
@@ -580,6 +611,7 @@ async function main(): Promise<void> {
     // exactly as /api/redeem does.
     return redemptions.run(async () => {
       try {
+        await requireWallet();
         const attestation = await requestAttestation(config.attestorUrl, {
           blueprintId: config.blueprintSlug,
           campaignId: round.campaign,
@@ -672,6 +704,7 @@ async function main(): Promise<void> {
 
     // Serialised: a redemption mutates private state, consumes a nullifier,
     // and borrows the shared wallet provider.
+    await requireWallet().catch(() => undefined);
     await redemptions.run(() => redeem(raw, session, emit));
     reply.raw.end();
   });
@@ -870,8 +903,12 @@ async function main(): Promise<void> {
   }
 
   const port = Number(process.env.MAILPROOF_WEB_PORT ?? 3000);
-  await app.listen({ port, host: '127.0.0.1' });
-  console.log(`\n  MailProof demo → http://127.0.0.1:${port}\n`);
+  // 0.0.0.0 in a container, loopback on a laptop. Bound to every interface by
+  // default a demo would be reachable from the café's wifi; refusing to bind
+  // publicly in a container means the platform kills it as unhealthy.
+  const host = process.env.MAILPROOF_WEB_HOST ?? '127.0.0.1';
+  await app.listen({ port, host });
+  console.log(`\n  MailProof daemon on ${host}:${port}`);
   console.log(`  contract: ${deployment.address}`);
   console.log(`  attestor: ${config.attestorUrl}\n`);
 }
