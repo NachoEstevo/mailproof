@@ -47,6 +47,21 @@
         "dnsRecord": "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmDCd37beruKGZbzQtwbaTCCYBUhQaZ81/TloS74Jn3/4XRuiXQrK+1/8Hc4+AwqkkYZ0pi6MkNNAI8rXqgtSr2r7d0bm21r21B/2mMdZXc+WKwSQYDmEuH/LWvdb/sMnJayqQN4yVd/O7udvUXGl2t6ZYfUbtCLaY4fjg1oPIZeYpplpqrKeYJHcD2klX8TA67ow0Yjw4Dal1njThO/ia587IjT2B1iBTJFLnb5wLjqhJ90VugWJOkKK+6en7Dxb5rrEzNK5huuzFLSonrecHhyto3TglmtcAWBRZrDO5jn8H/mC7YK6hha+v2xzrCivVT8Y4GAmzQuJ0mXdYCcAjwIDAQAB",
         "selector": "google"
       }
+    },
+    {
+      "key": "udesa-domain",
+      "status": "pinned",
+      "slug": "mailproof/DomainMembership@v1",
+      "proves": "domain-membership",
+      "claimType": "FLIGHT_CANCELLED",
+      "issuerDomain": "udesa.edu.ar",
+      "campaigns": [
+        "mailproof-demo-260808055530"
+      ],
+      "dkim": {
+        "dnsRecord": "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmDCd37beruKGZbzQtwbaTCCYBUhQaZ81/TloS74Jn3/4XRuiXQrK+1/8Hc4+AwqkkYZ0pi6MkNNAI8rXqgtSr2r7d0bm21r21B/2mMdZXc+WKwSQYDmEuH/LWvdb/sMnJayqQN4yVd/O7udvUXGl2t6ZYfUbtCLaY4fjg1oPIZeYpplpqrKeYJHcD2klX8TA67ow0Yjw4Dal1njThO/ia587IjT2B1iBTJFLnb5wLjqhJ90VugWJOkKK+6en7Dxb5rrEzNK5huuzFLSonrecHhyto3TglmtcAWBRZrDO5jn8H/mC7YK6hha+v2xzrCivVT8Y4GAmzQuJ0mXdYCcAjwIDAQAB",
+        "selector": "google"
+      }
     }
   ]
 }
