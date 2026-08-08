@@ -228,7 +228,16 @@ export circuit redeemClaim(claim: ClaimAttestationV1, sig: SchnorrSignature): []
   assert(claim.version == 1, "invalid claim encoding");
   assert(claim.claimType == allowedClaimType, "wrong claim type");
   assert(claim.blueprintIdHash == allowedBlueprintIdHash, "wrong blueprint");
-  assert(claim.issuerDomainHash == allowedIssuerDomainHash, "wrong issuer");
+  // The zero hash means "any institution". A campaign that serves one
+  // university pins its domain and the chain asserts *which*; a campaign open
+  // to many pins nothing and the chain asserts only that the attestor's
+  // allowlist accepted the domain it saw. Neither weakens the origin of the
+  // evidence — DKIM is checked either way, before a claim is ever signed.
+  assert(
+    (allowedIssuerDomainHash == default<Bytes<32>>)
+      || (claim.issuerDomainHash == allowedIssuerDomainHash),
+    "wrong issuer"
+  );
   assert(claim.campaignId == campaignId, "wrong campaign");
 
   // Binds the claim to whoever holds the subject secret in private state.

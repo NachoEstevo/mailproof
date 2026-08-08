@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { MailProofSimulator } from './simulator.js';
 import {
+  BLUEPRINT_ID_HASH,
   buildClaim,
   CAMPAIGN_ID,
   deployOptions,
@@ -21,7 +22,12 @@ import {
 } from './fixtures.js';
 import { deriveSubjectBinding } from '../../packages/shared/claim.js';
 import { JUBJUB_ORDER_HI, JUBJUB_ORDER_LO } from '../../packages/shared/constants.js';
-import { blueprintIdHash, issuerDomainHash } from '../../packages/shared/claim.js';
+import {
+  blueprintIdHash,
+  deriveNullifier,
+  issuerDomainHash,
+  uniqueClaimIdHash,
+} from '../../packages/shared/claim.js';
 
 let contract: MailProofSimulator;
 
@@ -178,6 +184,29 @@ describe('additional guards', () => {
       issuerDomainHash: issuerDomainHash('not-the-airline.example'),
     });
     expect(() => contract.redeemClaim(claim, signature)).toThrow('wrong issuer');
+  });
+
+  it('accepts any issuer when the campaign pins none', () => {
+    // The zero hash is the wildcard: a campaign open to many institutions
+    // pins no domain and delegates the decision to the attestor's allowlist.
+    const open = new MailProofSimulator({
+      ...deployOptions(),
+      issuerDomainHash: new Uint8Array(32),
+    });
+    for (const domain of ['udesa.edu.ar', 'mit.edu', 'unimaginable.example']) {
+      const { claim, signature } = signedClaim({
+        issuerDomainHash: issuerDomainHash(domain),
+        // A distinct claimant per domain, or the second redemption is refused
+        // as already spent and the test passes for the wrong reason.
+        claimNullifier: deriveNullifier(
+          BLUEPRINT_ID_HASH,
+          uniqueClaimIdHash(`claimant-at-${domain}`),
+          CAMPAIGN_ID,
+        ),
+      });
+      expect(() => open.redeemClaim(claim, signature)).not.toThrow();
+    }
+    expect(open.ledger.approvedClaimCount).toBe(3n);
   });
 
   it('rejects a signature scalar at or above the curve order', () => {
