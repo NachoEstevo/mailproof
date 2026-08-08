@@ -23,7 +23,7 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import { WebSocket } from 'ws';
 
-import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
+import { deployContract, findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
@@ -32,7 +32,13 @@ import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config
 import { Transaction } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import type { MidnightProvider, WalletProvider } from '@midnight-ntwrk/midnight-js-types';
 
-import { getDeployment, getOrCreateWallet, resolveNetwork } from '../../src/network.js';
+import {
+  getDeployment,
+  getOrCreateWallet,
+  recordDeployment,
+  resolveNetwork,
+} from '../../src/network.js';
+import { campaignName, repointAllowlist } from '../../src/round.js';
 import { createWallet, persistWalletState, type WalletContext } from '../../src/wallet.js';
 import {
   browserWalletProviders,
@@ -43,6 +49,7 @@ import {
   type WalletResponse,
 } from './wallet-bridge.js';
 import {
+  constructorArgs,
   loadCompiledContract,
   loadConfig,
   newPrivateState,
@@ -52,6 +59,7 @@ import {
   type MailProofPrivateState,
 } from '../../src/contract.js';
 import { AttestorRejection, fetchHealth, requestAttestation } from '../../src/attestor-client.js';
+import { writeDemoState } from '../../config/mailproof.js';
 import { deriveSubjectBinding } from '../../packages/shared/claim.js';
 import { verifyDkim } from '../../packages/shared/dkim.js';
 import { extensionOriginFromManifest } from '../../packages/shared/extension-id.js';
@@ -71,7 +79,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC_DIR = path.join(here, 'public');
 
 const { network, config: networkConfig } = resolveNetwork();
-const config = loadConfig();
+let config = loadConfig();
 
 /**
  * The `publicOutputs` label for DKIM-direct submissions. The verifier ignores
@@ -97,6 +105,9 @@ const EXTENSION_ORIGIN = extensionOriginFromManifest(
   path.resolve(here, '../extension/manifest.json'),
 );
 
+/** The attestor's policy. Written when a round opens; it re-reads on change. */
+const BLUEPRINTS_FILE = path.resolve(here, '../../config/blueprints.json');
+
 interface BlueprintEntry {
   slug: string;
   status: 'pending' | 'pinned';
@@ -105,9 +116,9 @@ interface BlueprintEntry {
 
 /** The active blueprint's allowlist entry — carries the pinned DKIM key. */
 function loadActiveBlueprintEntry(): BlueprintEntry | undefined {
-  const file = JSON.parse(
-    readFileSync(path.resolve(here, '../../config/blueprints.json'), 'utf8'),
-  ) as { blueprints: BlueprintEntry[] };
+  const file = JSON.parse(readFileSync(BLUEPRINTS_FILE, 'utf8')) as {
+    blueprints: BlueprintEntry[];
+  };
   return file.blueprints.find((b) => b.slug === config.blueprintSlug);
 }
 
@@ -176,12 +187,27 @@ async function main(): Promise<void> {
 
   const walletProvider = new DelegatingWalletProvider(serverWalletProvider(walletCtx));
   const providers = await createProviders(walletCtx, walletProvider);
-  const deployed: any = await findDeployedContract(providers, {
-    compiledContract: compiled as any,
-    contractAddress: deployment.address,
-    privateStateId: PRIVATE_STATE_ID,
-    initialPrivateState: newPrivateState() as any,
-  });
+  /**
+   * The contract this process is currently talking to.
+   *
+   * Mutable because a new round replaces it: a campaign is pinned into the
+   * contract at construction, so opening one means deploying. Everything
+   * downstream reads through `round` rather than capturing an address.
+   */
+  const round = {
+    address: deployment.address,
+    campaign: config.campaign,
+    campaignId: config.campaignId,
+    // Must come before reading private state: the store is scoped per
+    // contract, and `get` throws until a contract address has been set.
+    contract: (await findDeployedContract(providers, {
+      compiledContract: compiled as any,
+      contractAddress: deployment.address,
+      privateStateId: PRIVATE_STATE_ID,
+      initialPrivateState: newPrivateState() as any,
+    })) as any,
+  };
+
   const privateState = (await providers.privateStateProvider.get(
     PRIVATE_STATE_ID,
   )) as MailProofPrivateState | null;
@@ -191,9 +217,56 @@ async function main(): Promise<void> {
   }
 
   const readLedger = async () => {
-    const state = await providers.publicDataProvider.queryContractState(deployment.address);
+    const state = await providers.publicDataProvider.queryContractState(round.address);
     return state ? MailProof.ledger(state.data) : null;
   };
+
+  /**
+   * Open a new round: a fresh campaign, a fresh contract, an empty nullifier
+   * set.
+   *
+   * A claim is one-time within a campaign, which is the property worth
+   * showing and also why a demo can otherwise only be run once. Nothing is
+   * weakened here — the old contract keeps its spent nullifier forever, and a
+   * new campaign is what a real deployment would open for a new promotion.
+   *
+   * The subject's secret is deliberately carried over: it is the user's
+   * identity, not the round's, and a fresh one would quietly make this a
+   * different person rather than a new promotion.
+   */
+  async function openRound(emit: Emit): Promise<void> {
+    const campaign = campaignName(new Date());
+    emit('stage', { id: 'campaign', state: 'running', detail: campaign });
+
+    // Before deploying: the attestor re-reads this file and would otherwise
+    // refuse every claim for a campaign it has never heard of.
+    repointAllowlist(BLUEPRINTS_FILE, config.blueprintSlug, campaign);
+    writeDemoState({
+      campaign,
+      blueprintSlug: config.blueprintSlug,
+      issuerDomain: config.issuerDomain,
+      claimType: config.claimTypeName,
+    });
+    config = loadConfig();
+    emit('stage', { id: 'campaign', state: 'done', detail: campaign });
+
+    emit('stage', { id: 'deploy', state: 'running' });
+    const deployedRound: any = await deployContract(providers, {
+      compiledContract: compiled as any,
+      args: [...constructorArgs(config, network)] as any,
+      privateStateId: PRIVATE_STATE_ID,
+      initialPrivateState: privateState as any,
+    });
+    const address = deployedRound.deployTxData.public.contractAddress as string;
+    recordDeployment(network, address, walletCtx.unshieldedKeystore.getBech32Address().toString());
+
+    round.address = address;
+    round.campaign = config.campaign;
+    round.campaignId = config.campaignId;
+    round.contract = deployedRound;
+    emit('stage', { id: 'deploy', state: 'done', detail: `contract ${address.slice(0, 16)}…` });
+    console.log(`new round: ${campaign} → ${address}`);
+  }
 
   const app = Fastify({ logger: false, bodyLimit: 10_000_000 });
 
@@ -248,8 +321,8 @@ async function main(): Promise<void> {
     const health = await fetchHealth(config.attestorUrl).catch(() => null);
     return {
       network,
-      contractAddress: deployment.address,
-      campaign: config.campaign,
+      contractAddress: round.address,
+      campaign: round.campaign,
       claimType: config.claimTypeName,
       blueprint: config.blueprintSlug,
       issuerDomain: config.issuerDomain,
@@ -428,6 +501,39 @@ async function main(): Promise<void> {
     reply.raw.end();
   });
 
+  /**
+   * Open a new round.
+   *
+   * Shares the redemption lock: opening a round swaps the contract this
+   * process talks to, and doing that under a redemption in flight would
+   * submit to one contract and read the result from another.
+   */
+  app.post('/api/new-round', async (request, reply) => {
+    const origin = corsOrigin(request as never);
+    reply.raw.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'cache-control': 'no-cache',
+      connection: 'keep-alive',
+      ...(origin ? { 'access-control-allow-origin': origin, vary: 'origin' } : {}),
+    });
+    const emit: Emit = (event, data) => {
+      reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    await redemptions.run(async () => {
+      try {
+        await openRound(emit);
+        emit('done', { campaign: round.campaign, contractAddress: round.address });
+      } catch (error) {
+        emit('failed', {
+          code: 'ERROR',
+          message: error instanceof Error ? error.message.split('\n')[0] : 'could not open a round',
+        });
+      }
+    });
+    reply.raw.end();
+  });
+
   /** Wallet details a browser sends when it wants its own wallet to pay. */
   interface WalletSession {
     readonly id: string;
@@ -526,9 +632,9 @@ async function main(): Promise<void> {
 
       const attestation = await requestAttestation(config.attestorUrl, {
         blueprintId: config.blueprintSlug,
-        campaignId: config.campaign,
+        campaignId: round.campaign,
         subjectBinding: toHex(
-          deriveSubjectBinding(privateState.subjectSecret, config.campaignId),
+          deriveSubjectBinding(privateState.subjectSecret, round.campaignId),
         ),
         publicOutputs: DKIM_DIRECT_OUTPUTS,
         proofData: raw,
@@ -546,7 +652,7 @@ async function main(): Promise<void> {
         note: bridge ? 'Approve the transaction in your wallet.' : undefined,
       });
       const startedAt = Date.now();
-      const tx = await deployed.callTx.redeemClaim(attestation.claim, attestation.signature);
+      const tx = await round.contract.callTx.redeemClaim(attestation.claim, attestation.signature);
       const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
       emit('stage', {
         id: 'submit',
