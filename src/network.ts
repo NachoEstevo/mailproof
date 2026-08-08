@@ -352,6 +352,14 @@ export function formatWalletBackupNotice(
 }
 
 export function getDeployment(network: NetworkId, opts: FsOptions = {}): DeploymentRecord | null {
+  // A container has no state file — the address the laptop recorded at deploy
+  // time arrives as an environment variable instead. The env wins over the
+  // file so a stale local state cannot shadow the deployment a server was
+  // explicitly configured for.
+  const fromEnv = process.env.MIDNIGHT_CONTRACT_ADDRESS?.trim();
+  if (fromEnv) {
+    return { address: fromEnv, deployer: 'env', deployedAt: 'env' };
+  }
   const state = loadState(opts);
   return state?.deployments?.[network] ?? null;
 }

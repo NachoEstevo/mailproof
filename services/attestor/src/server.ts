@@ -21,6 +21,7 @@ import { logAttest, newRequestId, type Sink } from './logging.js';
 import { attestRequestSchema, serialiseSignedClaim } from './schema.js';
 import { DkimProofVerifier } from './dkim-verifier.js';
 import { RoutingProofVerifier } from './routing-verifier.js';
+import { SelfAttestationProofVerifier } from './self-attestation-verifier.js';
 import type { ProofVerifier } from './verifier.js';
 import { ZkEmailProofVerifier } from './zk-email-verifier.js';
 
@@ -179,9 +180,40 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
  * verifier that looks real is how a project ends up demoing "the backend
  * said true" (§8, option E).
  */
+/**
+ * The domain-membership verifier only exists when its secrets do.
+ *
+ * Half-configuring it — a challenge secret with no blinding key — would let
+ * the service start and then fail at the first real user, so it is all three
+ * variables or none, checked at boot.
+ */
+function resolveSelfAttestation(env: NodeJS.ProcessEnv): SelfAttestationProofVerifier | undefined {
+  const secret = env.MAILPROOF_CHALLENGE_SECRET?.trim();
+  const blinding = env.MAILPROOF_BLINDING_KEY?.trim();
+  const audience = env.MAILPROOF_AUDIENCE?.trim();
+  if (!secret && !blinding && !audience) return undefined;
+  if (!secret || !blinding || !audience) {
+    throw new AttestorError(
+      ATTESTOR_ERROR.SIGNING_UNAVAILABLE,
+      'domain membership needs MAILPROOF_CHALLENGE_SECRET, MAILPROOF_BLINDING_KEY and ' +
+        'MAILPROOF_AUDIENCE together — set all three or none',
+    );
+  }
+  return new SelfAttestationProofVerifier({
+    challengeSecret: Buffer.from(secret, 'hex'),
+    blindingKey: Buffer.from(blinding, 'hex'),
+    audience,
+    maxAgeMs: Number(env.MAILPROOF_MAX_SIGNATURE_AGE_MS ?? 24 * 60 * 60 * 1000),
+  });
+}
+
 function resolveVerifier(env: NodeJS.ProcessEnv, moduleDir: string): ProofVerifier {
   if (env.MAILPROOF_ALLOW_FIXTURE_VERIFIER !== '1') {
-    return new RoutingProofVerifier(new DkimProofVerifier(), new ZkEmailProofVerifier());
+    return new RoutingProofVerifier(
+      new DkimProofVerifier(),
+      new ZkEmailProofVerifier(),
+      resolveSelfAttestation(env),
+    );
   }
 
   const file =
