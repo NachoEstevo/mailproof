@@ -322,3 +322,62 @@ Three costs, all real:
 
 The web UI at `:3000` is unchanged and remains the fallback if the extension
 misbehaves on the day.
+
+---
+
+## D-009 — More than one run, without a reusable claim
+
+**Date:** 2026-08-08
+**Status:** accepted
+
+### Context
+
+A claim is spendable exactly once: the nullifier is
+`H(domain, blueprintIdHash, uniqueClaimIdHash, campaignId)`, the contract
+inserts it into `usedNullifiers`, and the second attempt is rejected. That is
+the property the whole project exists to demonstrate.
+
+It also meant the demo could be run once per deployment. Every further run
+needed `npm run demo:reset` at a terminal, plus restarting the attestor and
+the web app, which is not something to do in front of a room — and not
+something a user of the extension should ever have to know about.
+
+The tempting fix is to make the claim reusable. That would delete the reason
+Midnight is in this project at all.
+
+### Decision
+
+Keep the claim one-time and make **rounds** cheap. A round is a campaign: a
+fresh contract, pinned to a fresh campaign id, with an empty nullifier set.
+`POST /api/new-round` opens one from the side panel, and the button appears
+only once the current round has been spent — so the rejection is still seen
+before the way past it is offered.
+
+Nothing is weakened. The campaign is part of the nullifier's preimage, so a
+new campaign is a genuinely different claim, and the previous contract keeps
+its spent nullifier forever. A new campaign is also exactly what a real
+deployment opens for a new promotion.
+
+Two supporting changes were needed:
+
+- The attestor re-reads `config/blueprints.json` when its mtime moves. It
+  refuses a campaign it has never heard of, so without this every round
+  required a restart. A broken file keeps the last good policy.
+- `campaignName` is precise to the second. At minute resolution two rounds
+  opened in the same minute shared a campaign, which silently turned the
+  second into a replay.
+
+The subject's secret is carried across rounds on purpose: it is the user's
+identity, not the round's, and minting a fresh one would quietly make each
+round a different person rather than a new promotion.
+
+### Consequence
+
+Opening a round costs one deployment, about 25 seconds, and is unlimited.
+The demo now reads: verify → replay rejected → new round → the same email
+verifies again. The middle step is the pitch; the third stops it from being
+a one-shot.
+
+`npm run demo:reset` still exists and still recompiles, which the route does
+not — it is the right tool after a contract change, and the wrong one on
+stage.

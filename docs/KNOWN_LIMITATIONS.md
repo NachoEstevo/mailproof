@@ -106,6 +106,11 @@ Appendix K. Update this file whenever scope changes.
     step has more than one strategy and a validation gate, and the panel
     falls back to a file picker when they fail — but the capture button is an
     accelerator, not the demo's critical path (D-008).
+15d. **A round costs a deployment.** A campaign is pinned into the contract at
+    construction, so "run it again" means deploying — about 25 seconds, from
+    the panel's *Open a new round* button (D-009). Unlimited, but not
+    instant, and it recompiles nothing: after a contract change the right
+    tool is still `npm run demo:reset`.
 15c. **`--load-extension` no longer works.** Chrome 137 dropped it; the flag
     is accepted and silently ignored, and the only symptom is
     `ERR_BLOCKED_BY_CLIENT` on the extension's own pages. Load it from
