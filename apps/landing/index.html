@@ -75,34 +75,58 @@
 
     <!-- ── How ──────────────────────────────────────────────────────────── -->
 
-    <section id="how" class="band">
+    <section id="how" class="band meadow">
       <div class="page">
         <p class="eyebrow">How it works</p>
-        <h2 class="section-title">Three steps.</h2>
+        <h2 class="section-title">Three steps, and you never type your address.</h2>
 
-        <div class="steps">
-          <div class="step">
+        <ol class="flow">
+          <li>
             <span class="n">01</span>
-            <h3>The site shows a code</h3>
-            <p>It expires in minutes and works on that site only.</p>
-          </div>
-          <div class="step">
+            <div class="flow-text">
+              <h3>The site shows you a code</h3>
+              <p>
+                It expires in minutes and authenticates for that one site, so it
+                cannot be replayed anywhere else.
+              </p>
+            </div>
+            <div class="artifact code-chip">MP-4KQ7-9XW2-3TFA</div>
+          </li>
+
+          <li>
             <span class="n">02</span>
-            <h3>You send yourself an email</h3>
-            <p>
-              From the address you want to prove. Your provider signs it —
-              that signature is the proof, and only you can produce it.
-            </p>
-          </div>
-          <div class="step">
+            <div class="flow-text">
+              <h3>You send yourself an email</h3>
+              <p>
+                From the address you want to prove. Your provider signs it on the
+                way out — and it will not sign a message claiming to come from a
+                mailbox you do not control. That signature is the proof.
+              </p>
+            </div>
+            <div class="artifact note">
+              <span class="line"><b>From</b> ana@udesa.edu.ar</span>
+              <span class="line"><b>To</b> ana@udesa.edu.ar</span>
+              <span class="line body">MP-4KQ7-9XW2-3TFA</span>
+              <span class="seal">DKIM · udesa.edu.ar</span>
+            </div>
+          </li>
+
+          <li>
             <span class="n">03</span>
-            <h3>The claim is spent, once</h3>
-            <p>
-              Your mailbox becomes an unguessable value on Midnight. The site
-              sees the domain and a first-time flag. Never the address.
-            </p>
-          </div>
-        </div>
+            <div class="flow-text">
+              <h3>The claim is spent, once</h3>
+              <p>
+                Your mailbox becomes an unguessable value on Midnight. The site
+                reads the domain and a first-time flag. The chain holds neither.
+              </p>
+            </div>
+            <div class="artifact ledger-line">
+              <span class="k">nullifier</span>
+              <span class="v">0x38c4798a…4fea14</span>
+              <span class="spent">spent</span>
+            </div>
+          </li>
+        </ol>
       </div>
     </section>
 
@@ -111,34 +135,102 @@
     <section id="sdk">
       <div class="page">
         <p class="eyebrow">The SDK</p>
-        <h2 class="section-title">Two calls in your own backend.</h2>
+        <h2 class="section-title">Two calls, on your own server.</h2>
 
-<pre><code>const { code } = mailproof.startVerification()
+        <div class="editor-row">
+          <div class="editor">
+            <div class="editor-bar">
+              <span class="tab">app/api/verify/route.ts</span>
+            </div>
+<pre><code><span class="c">// 1 · mint a code, show it to the user</span>
+<span class="kw">const</span> { code } = mailproof.<span class="fn">startVerification</span>()
 
-const result = await mailproof.verify(eml)
+<span class="c">// 2 · they hand back the message they sent themselves</span>
+<span class="kw">const</span> result = <span class="kw">await</span> mailproof.<span class="fn">verify</span>(eml)
 
-if (result.ok &amp;&amp; result.tier === 'STUDENT' &amp;&amp; !result.alreadyClaimed) {
-  await db.user.update({ where: { id }, data: { plan: 'PRO' } })
+<span class="kw">if</span> (result.ok &amp;&amp; result.tier === <span class="s">'STUDENT'</span> &amp;&amp; !result.alreadyClaimed) {
+  <span class="kw">await</span> db.user.<span class="fn">update</span>({ <span class="k2">where</span>: { id }, <span class="k2">data</span>: { <span class="k2">plan</span>: <span class="s">'PRO'</span> } })
 }</code></pre>
+          </div>
 
-        <p class="prose">
-          You choose which domains earn which tier, and what to grant. The SDK
-          never sees a benefit and you never see an address.
-          <a href="docs.html#quickstart">Read the quickstart&nbsp;→</a>
-        </p>
+          <aside class="returns">
+            <h3>What comes back</h3>
+            <dl>
+              <dt>tier</dt>
+              <dd><code>'STUDENT'</code> — from your rules, or <code>null</code></dd>
+              <dt>handle</dt>
+              <dd>one value per person, per campaign. Not reversible</dd>
+              <dt>alreadyClaimed</dt>
+              <dd>a field, not an error. It is the question you asked</dd>
+              <dt>trust</dt>
+              <dd>who read the message, stated in the result</dd>
+            </dl>
+            <p class="never">Never returned: the address, the name, the inbox.</p>
+          </aside>
+        </div>
       </div>
     </section>
 
-    <!-- ── Close ────────────────────────────────────────────────────────── -->
+    <!-- ── Questions ────────────────────────────────────────────────────── -->
 
-    <section id="start" class="band close">
+    <section id="questions" class="soil">
       <div class="page">
-        <h2 class="section-title">Everything is open. Run all of it yourself.</h2>
-        <div class="hero-cta">
-          <a class="btn big" href="https://github.com/NachoEstevo/mailproof">
-            github.com/NachoEstevo/mailproof
-          </a>
-          <a class="btn big ghost" href="docs.html">Documentation</a>
+        <p class="eyebrow">Straight answers</p>
+        <h2 class="section-title">The six questions everybody asks.</h2>
+
+        <div class="qa">
+          <div>
+            <h3>If you never see my address, how do you email me?</h3>
+            <p>
+              We do not. The site you signed up to still has whatever address you
+              gave it for notifications — that is a separate thing, and you chose
+              it. MailProof only proves the institutional mailbox, and that one
+              stays out of the database.
+            </p>
+          </div>
+          <div>
+            <h3>Why send myself an email instead of clicking a link?</h3>
+            <p>
+              Because a message someone sent <em>to</em> you proves nothing:
+              whoever sent it chose the recipient. A message you sent is signed by
+              your own provider, and it will not sign an address you do not
+              control.
+            </p>
+          </div>
+          <div>
+            <h3>Can I just use a second mailbox and claim twice?</h3>
+            <p>
+              At a domain anyone can join, yes — which is why a generic address
+              earns nothing here. The guarantee is exactly as strong as the
+              difficulty of getting a second mailbox at that domain. A second
+              university account is a real obstacle.
+            </p>
+          </div>
+          <div>
+            <h3>Who actually reads the email?</h3>
+            <p>
+              The attestor, which checks the message's own RSA signature. Not the
+              site, and not the chain — but not nobody either. Every result says
+              so in a <code>trust</code> field, and you can run the attestor
+              yourself.
+            </p>
+          </div>
+          <div>
+            <h3>Why does this need a chain at all?</h3>
+            <p>
+              The "already claimed" list has to be public, owned by nobody,
+              shareable between sites, and impossible to read backwards. A
+              database gives you the last one only. A normal public chain loses it.
+            </p>
+          </div>
+          <div>
+            <h3>What happens when I graduate?</h3>
+            <p>
+              Campaigns run per period, so a benefit is re-proven rather than
+              granted forever. Your old address may outlive your enrolment; the
+              benefit does not.
+            </p>
+          </div>
         </div>
       </div>
     </section>

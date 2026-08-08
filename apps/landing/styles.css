@@ -272,21 +272,206 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
 }
 .hero-cta .btn.ghost:hover { border-color: var(--paper); }
 
-/* ── Steps ───────────────────────────────────────────────────────────────── */
+/* ── Flow ────────────────────────────────────────────────────────────────── */
 
-.steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 28px; margin-top: 52px; }
+/*
+ * Three rows rather than three columns. Columns forced every step into the
+ * same tiny paragraph and gave the sequence no sense of order; a row can be
+ * read left to right — number, what happens, what you actually see.
+ */
+.flow { list-style: none; margin: 54px 0 0; padding: 0; counter-reset: none; }
 
-.step { position: relative; padding-top: 26px; border-top: 2px solid var(--ink); }
-.step .n {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: 0.14em;
-  color: var(--poppy);
-  display: block;
-  margin-bottom: 12px;
+.flow li {
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr) minmax(0, 0.85fr);
+  gap: 34px;
+  align-items: start;
+  padding: 34px 0;
+  border-top: 1px solid rgba(250, 241, 197, 0.24);
 }
-.step h3 { font-size: 23px; margin-bottom: 10px; }
-.step p { font-size: 15.5px; color: var(--ink-soft); margin: 0; }
+.flow li:last-child { border-bottom: 1px solid rgba(250, 241, 197, 0.24); }
+
+.flow .n {
+  font-family: var(--serif);
+  font-size: 42px;
+  line-height: 1;
+  color: var(--dandelion);
+}
+
+.flow h3 { font-size: 25px; margin-bottom: 9px; color: var(--paper); }
+.flow p { font-size: 15.5px; margin: 0; color: rgba(250, 241, 197, 0.78); }
+
+/* ── What each step looks like ───────────────────────────────────────────── */
+
+/*
+ * Small renderings of the thing the reader will actually be holding at that
+ * point. A sequence described only in prose asks the reader to imagine it;
+ * showing the code, the message and the ledger entry does not.
+ */
+.artifact { font-family: var(--mono); font-size: 12.5px; }
+
+.code-chip {
+  display: inline-block;
+  padding: 15px 20px;
+  border: 1px dashed rgba(250, 241, 197, 0.45);
+  border-radius: 8px;
+  font-size: 16px;
+  letter-spacing: 0.1em;
+  color: var(--paper);
+  background: rgba(0, 0, 0, 0.14);
+}
+
+.note {
+  display: grid;
+  gap: 5px;
+  padding: 16px 18px;
+  border-radius: 8px;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.24);
+}
+.note .line { overflow-wrap: anywhere; }
+.note b { color: var(--ink-faint); font-weight: 500; margin-right: 7px; }
+.note .body {
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  letter-spacing: 0.08em;
+}
+.note .seal {
+  margin-top: 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--leaf);
+}
+
+.ledger-line {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 12px;
+  padding: 16px 18px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--paper);
+}
+.ledger-line .k { color: rgba(250, 241, 197, 0.5); }
+.ledger-line .v { overflow-wrap: anywhere; }
+.ledger-line .spent {
+  grid-column: 2;
+  margin-top: 6px;
+  justify-self: start;
+  padding: 2px 9px;
+  border-radius: 3px;
+  background: var(--poppy);
+  font-size: 10.5px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+/* ── Editor ──────────────────────────────────────────────────────────────── */
+
+.editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+  gap: 34px;
+  margin-top: 46px;
+  align-items: start;
+}
+
+.editor {
+  border-radius: 11px;
+  overflow: hidden;
+  background: var(--ink);
+  box-shadow: 0 22px 50px rgba(20, 20, 15, 0.2);
+}
+.editor-bar {
+  display: flex;
+  align-items: center;
+  padding: 0 14px;
+  background: #1e1e18;
+  border-bottom: 1px solid rgba(250, 241, 197, 0.1);
+}
+.editor-bar .tab {
+  padding: 11px 4px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: rgba(250, 241, 197, 0.55);
+}
+.editor pre { margin: 0; border-radius: 0; padding: 22px 24px 26px; }
+
+/* Coloured by hand. A highlighter would be a dependency, a build step and a
+   flash of unstyled code, for six tokens. */
+.editor .c  { color: #7b7f6a; font-style: italic; }
+.editor .kw { color: #f7d002; }
+.editor .fn { color: #7dd3fc; }
+.editor .s  { color: #9ede6a; }
+.editor .k2 { color: rgba(250, 241, 197, 0.72); }
+
+.returns h3 { font-size: 21px; margin-bottom: 16px; }
+.returns dl { margin: 0; font-size: 14.5px; }
+.returns dt {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--poppy);
+  margin-top: 15px;
+}
+.returns dt:first-child { margin-top: 0; }
+.returns dd { margin: 3px 0 0; color: var(--ink-soft); }
+.returns .never {
+  margin: 24px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--rule);
+  font-size: 14px;
+  color: var(--ink);
+}
+
+/* ── Questions ───────────────────────────────────────────────────────────── */
+
+/*
+ * On soil rather than another blue band. Four cobalt sections in a row flattens
+ * the page; putting the questions underground also lands them next to the
+ * footer they belong with.
+ */
+.soil {
+  position: relative;
+  overflow: hidden;
+  background: #0b0803;
+  color: rgba(250, 241, 197, 0.8);
+}
+.soil::before {
+  content: "";
+  position: absolute;
+  inset: -40px;
+  background: url("assets/roots.webp") center / cover no-repeat;
+  filter: blur(7px) saturate(1.05);
+  opacity: 0.5;
+}
+.soil::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(11, 8, 3, 0.86), rgba(11, 8, 3, 0.6));
+}
+.soil .page { position: relative; z-index: 1; }
+.soil .section-title { color: var(--paper); }
+.soil .eyebrow { color: rgba(250, 241, 197, 0.5); }
+.soil code { background: rgba(250, 241, 197, 0.14); color: var(--paper); }
+
+.qa {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+  gap: 40px 52px;
+  margin-top: 52px;
+}
+.qa h3 {
+  font-size: 21px;
+  margin-bottom: 10px;
+  color: var(--paper);
+  text-indent: -0.42em;
+}
+.qa h3::before { content: "“"; color: var(--dandelion); }
+.qa p { font-size: 15.5px; margin: 0; color: rgba(250, 241, 197, 0.76); }
 
 /* ── Dark band ───────────────────────────────────────────────────────────── */
 
@@ -294,14 +479,29 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   background: var(--sky);
   color: var(--paper);
 }
+
+/*
+ * The meadow grows out of the band.
+ *
+ * The illustration's own sky is this same cobalt, so anchoring it to the
+ * bottom of a cobalt section makes the grass appear to belong to the section
+ * rather than to sit in a frame on top of it. The gradient matches the band to
+ * the picture's lower sky, which is a shade deeper than its top.
+ */
+.band.meadow {
+  background:
+    url("assets/hero.webp") center bottom / 100% auto no-repeat,
+    linear-gradient(180deg, var(--sky) 0%, #0144df 100%);
+  /* The grass occupies the lower ~45% of the picture, and the picture is laid
+     in at full width, so the last row needs to clear roughly 0.27 of the
+     viewport width or step three ends up growing out of a leaf. */
+  padding-bottom: clamp(210px, 28vw, 420px);
+}
 .band .section-title { color: var(--paper); }
 .band .lede, .band p { color: rgba(250, 241, 197, 0.82); }
 .band .eyebrow { color: rgba(250, 241, 197, 0.55); }
 .band pre { background: rgba(0, 0, 0, 0.34); color: var(--paper); }
 .band code { background: rgba(250, 241, 197, 0.14); }
-
-.close { text-align: center; }
-.close .section-title { max-width: 20ch; margin: 0 auto 30px; }
 
 .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(32px, 6vw, 76px); align-items: start; }
 
@@ -477,7 +677,7 @@ footer .midnight-mark { color: var(--paper); }
 /* ── Narrow ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
-  .steps, .split { grid-template-columns: 1fr; }
+  .split { grid-template-columns: 1fr; }
   .docs-layout { grid-template-columns: 1fr; gap: 28px; }
   .toc { position: static; }
   .toc a { display: inline-block; border-left: none; border-bottom: 2px solid var(--rule); margin-right: 14px; }
