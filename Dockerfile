@@ -35,9 +35,6 @@ COPY config ./config
 COPY src ./src
 COPY tsconfig.json ./
 
-# tsx is a dev dependency but is how both entry points run.
-RUN npm install --no-save tsx@4
-
 ENV NODE_ENV=production
 ENV SERVICE=daemon
 

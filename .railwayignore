@@ -1,0 +1,14 @@
+# railway up honours .gitignore, and the compiled circuit lives under an
+# ignored `managed/`. The image needs it: it is what makes the container
+# unable to ship a contract different from the one already on chain.
+!contracts/managed
+!contracts/managed/**
+
+node_modules
+.git
+.browser-profile
+.midnight-wallet-state
+midnight-level-db
+apps/landing/assets
+*.log
+fixtures/private-emails
