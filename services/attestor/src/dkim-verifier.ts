@@ -28,7 +28,7 @@ import {
 import { signedBody, verifyDkim, type DkimVerificationResult } from '../../../packages/shared/dkim.js';
 import { plainTextReadings } from '../../../packages/shared/mime.js';
 
-import type { BlueprintPolicy } from './allowlist.js';
+import { requireClaimInBody, type BlueprintPolicy } from './allowlist.js';
 import { ATTESTOR_ERROR, AttestorError } from './errors.js';
 import type { ProofSubmission, ProofVerifier, VerifiedEvidence } from './verifier.js';
 
@@ -40,6 +40,10 @@ export class DkimProofVerifier implements ProofVerifier {
   constructor(private readonly now: () => Date = () => new Date()) {}
 
   async verify(submission: ProofSubmission, policy: BlueprintPolicy): Promise<VerifiedEvidence> {
+    // Narrowed once, here: these four fields are what a marker-based
+    // blueprint is, and they are optional on the type because a
+    // domain-membership entry has no use for them.
+    const marker = requireClaimInBody(policy);
     const dkim = policy.dkim;
     if (!dkim) {
       throw new AttestorError(
@@ -158,7 +162,7 @@ export class DkimProofVerifier implements ProofVerifier {
     // soft break fabricate a line boundary and defeat the anchored pattern.
     const claimMarker = findMarkerLine(
       plainTextReadings(eml, signedBody(eml.body, signature.bodyLength)),
-      policy.markerPattern,
+      marker.markerPattern,
     );
     if (claimMarker === undefined) {
       throw new AttestorError(

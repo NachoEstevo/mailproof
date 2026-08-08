@@ -81,7 +81,11 @@ export async function attest(request: AttestRequest, deps: AttestDeps): Promise<
 
   // 5. And that the extracted text actually states the claim. The pattern is
   //    anchored (enforced at load) so "has not been cancelled" cannot pass.
-  if (!new RegExp(policy.markerPattern).test(evidence.claimMarker)) {
+  //
+  //    A domain-membership blueprint has no pattern and needs none: its
+  //    verifier already checked the challenge code against a secret, which is
+  //    a stronger test than any regex, and the marker it returns is that code.
+  if (policy.markerPattern !== undefined && !new RegExp(policy.markerPattern).test(evidence.claimMarker)) {
     throw new AttestorError(ATTESTOR_ERROR.CLAIM_NOT_SATISFIED);
   }
 

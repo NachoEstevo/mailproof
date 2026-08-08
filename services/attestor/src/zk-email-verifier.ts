@@ -11,7 +11,7 @@
  */
 import { initZkEmailSdk, type Blueprint } from '@zk-email/sdk';
 
-import type { BlueprintPolicy } from './allowlist.js';
+import { requireClaimInBody, type BlueprintPolicy } from './allowlist.js';
 import { ATTESTOR_ERROR, AttestorError } from './errors.js';
 import type { ProofSubmission, ProofVerifier, VerifiedEvidence } from './verifier.js';
 
@@ -41,6 +41,10 @@ export class ZkEmailProofVerifier implements ProofVerifier {
   }
 
   async verify(submission: ProofSubmission, policy: BlueprintPolicy): Promise<VerifiedEvidence> {
+    // Narrowed once, here: these four fields are what a marker-based
+    // blueprint is, and they are optional on the type because a
+    // domain-membership entry has no use for them.
+    const marker = requireClaimInBody(policy);
     if (policy.status !== 'pinned') {
       // The slug has not been compiled on the registry yet. Running anyway
       // would mean "verifying" against a blueprint that does not exist, which
@@ -82,7 +86,7 @@ export class ZkEmailProofVerifier implements ProofVerifier {
     if (!valid) throw new AttestorError(ATTESTOR_ERROR.PROOF_INVALID);
 
     const outputs = extractNamedOutputs(blueprint, submission.publicOutputs);
-    for (const name of policy.requiredOutputs) {
+    for (const name of marker.requiredOutputs) {
       if (!outputs.has(name)) {
         throw new AttestorError(ATTESTOR_ERROR.PUBLIC_OUTPUT_MISSING, `missing output "${name}"`);
       }
@@ -90,8 +94,8 @@ export class ZkEmailProofVerifier implements ProofVerifier {
 
     return {
       issuerDomain: pinnedDomain,
-      claimMarker: outputs.get(policy.markerOutput) ?? '',
-      uniqueClaimId: outputs.get(policy.uniqueIdOutput) ?? '',
+      claimMarker: outputs.get(marker.markerOutput) ?? '',
+      uniqueClaimId: outputs.get(marker.uniqueIdOutput) ?? '',
     };
   }
 }

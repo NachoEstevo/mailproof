@@ -38,6 +38,7 @@ const BASE = {
   claimType: 'FLIGHT_CANCELLED' as const,
   issuerDomain: 'example.test',
   campaigns: ['c'],
+  proves: 'claim-in-body' as const,
   requiredOutputs: ['cancellationMarker', 'uniqueClaimId'],
   markerOutput: 'cancellationMarker',
   uniqueIdOutput: 'uniqueClaimId',
