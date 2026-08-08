@@ -13,11 +13,12 @@
  * reset. Without a slug the previous selection (or the default) is kept.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 
 import { loadConfig, writeDemoState } from '../config/mailproof';
 import { parseDkimSignatures, parseEml } from '../packages/shared/eml';
 import { getDeployment, resolveNetwork } from '../src/network';
+import { campaignName, repointAllowlist as repointBlueprintCampaign } from '../src/round';
 
 const BLUEPRINTS_FILE = 'config/blueprints.json';
 const PRIVATE_DEMO_EML = 'fixtures/private-emails/flight-edu.eml';
@@ -107,16 +108,12 @@ function warnIfDemoEmailExpiring(issuerDomain: string): void {
  * accumulate.
  */
 function repointAllowlist(slug: string, campaign: string): void {
-  const file = JSON.parse(readFileSync(BLUEPRINTS_FILE, 'utf8')) as {
-    blueprints: Array<{ slug: string; campaigns: string[] }>;
-  };
-  const entry = file.blueprints.find((b) => b.slug === slug);
-  if (!entry) {
-    console.error(`\n❌ ${BLUEPRINTS_FILE} has no entry for ${slug}\n`);
+  try {
+    repointBlueprintCampaign(BLUEPRINTS_FILE, slug, campaign);
+  } catch (error) {
+    console.error(`\n❌ ${error instanceof Error ? error.message : error}\n`);
     process.exit(1);
   }
-  entry.campaigns = [campaign];
-  writeFileSync(BLUEPRINTS_FILE, `${JSON.stringify(file, null, 2)}\n`);
 }
 
 function run(command: string, args: string[]): void {
@@ -145,8 +142,7 @@ async function main(): Promise<void> {
 
   // Time-based so consecutive resets never collide, readable so it is obvious
   // in the UI which run is on screen.
-  const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(2, 12);
-  const campaign = `mailproof-demo-${stamp}`;
+  const campaign = campaignName(new Date());
 
   console.log(`\n─── demo:reset ──────────────────────────────────────────────`);
   const entry = chooseBlueprint(readAllowlist(), process.argv[2]?.trim() || undefined);

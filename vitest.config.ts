@@ -9,6 +9,7 @@ export default defineConfig({
       'packages/**/*.test.ts',
       'services/**/tests/**/*.test.ts',
       'scripts/**/*.test.ts',
+      'src/**/*.test.ts',
     ],
     // Circuit execution runs the on-chain runtime through WASM; the default
     // 5s timeout is tight for the first test in a file, which pays WASM init.
