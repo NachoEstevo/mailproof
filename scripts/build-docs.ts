@@ -36,6 +36,20 @@ const escape = (text: string): string =>
   text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
 /**
+ * Make text safe to sit inside a `<script>` without changing it.
+ *
+ * HTML-escaping would be wrong here: a script element's content is raw text
+ * and the browser does not decode entities in it, so `&lt;` would survive all
+ * the way to the clipboard and the copied Markdown would be corrupt. The only
+ * sequence that can end the element early is `</`, so that is the only one
+ * that needs neutralising — and the backslash is invisible to a Markdown
+ * reader in the one place it can appear.
+ */
+function inertInScript(text: string): string {
+  return text.replace(/<\//g, '<\\/');
+}
+
+/**
  * Drop the H2 a section opens with.
  *
  * The page supplies its own heading, anchored for the sidebar. Leaving the
@@ -54,6 +68,10 @@ function render(): string {
       html: marked.parse(withoutLeadingHeading(markdown), { async: false, gfm: true }),
     };
   });
+
+  const rawMarkdown = rendered
+    .map((s) => `# ${s.title}\n\n${readFileSync(path.join(CONTENT, `${s.slug}.md`), 'utf8').replace(/^\s*##\s+.*\n/, '').trim()}`)
+    .join('\n\n---\n\n');
 
   const toc = rendered
     .map((s) => `          <a href="#${s.slug}">${escape(s.title)}</a>`)
@@ -103,7 +121,7 @@ ${s.html
       <div class="wordmark"><a href="index.html" style="text-decoration: none">MailProof</a></div>
     </header>
 
-    <div class="page docs-layout">
+    <div class="docs-layout">
       <aside class="toc">
         <strong>Documentation</strong>
 ${toc}
@@ -114,9 +132,26 @@ ${toc}
       </aside>
 
       <main class="doc">
+        <div class="doc-head">
+          <p>MailProof · documentation</p>
+          <button class="copy-all" id="copy-all" type="button">
+            <svg viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <rect x="5.2" y="5.2" width="8.3" height="8.3" rx="1.6" stroke="currentColor" stroke-width="1.5"/>
+              <path d="M10.8 5.2V3.9c0-.8-.6-1.4-1.4-1.4H3.9c-.8 0-1.4.6-1.4 1.4v5.5c0 .8.6 1.4 1.4 1.4h1.3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            </svg>
+            <span>Copy all docs</span>
+          </button>
+        </div>
 ${body}
       </main>
     </div>
+
+    <!--
+      The Markdown source, verbatim, for the copy button. In a script tag so it
+      is inert: the browser will not parse it, and it survives being opened
+      from a file:// URL where a fetch would not.
+    -->
+    <script type="text/markdown" id="docs-source">${inertInScript(rawMarkdown)}</script>
 
     <footer>
       <div class="page row">
@@ -134,6 +169,34 @@ ${body}
     <script>
       // Highlight the section being read. IntersectionObserver rather than a
       // scroll handler, so it costs nothing while scrolling.
+      // Copying the whole thing as Markdown is how people read documentation
+      // now — into an editor, into a model, into a ticket.
+      const copyButton = document.getElementById('copy-all');
+      const label = copyButton.querySelector('span');
+      copyButton.addEventListener('click', async () => {
+        const source = document.getElementById('docs-source').textContent;
+        try {
+          await navigator.clipboard.writeText(source);
+        } catch {
+          // Clipboard access is refused on insecure origins and in some
+          // browsers without a gesture it recognises; selecting the text is
+          // worse than copying it but much better than nothing happening.
+          const area = document.createElement('textarea');
+          area.value = source;
+          document.body.append(area);
+          area.select();
+          document.execCommand('copy');
+          area.remove();
+        }
+        const words = source.split(/\s+/).length;
+        label.textContent = \`Copied \${words.toLocaleString()} words\`;
+        copyButton.classList.add('done');
+        setTimeout(() => {
+          label.textContent = 'Copy all docs';
+          copyButton.classList.remove('done');
+        }, 2600);
+      });
+
       const links = new Map(
         [...document.querySelectorAll('.toc a[href^="#"]')].map((a) => [a.hash.slice(1), a]),
       );
