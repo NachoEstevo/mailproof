@@ -47,6 +47,37 @@ export type SelfAttestationFailure =
   | 'CHALLENGE_MISSING'
   | 'CHALLENGE_INVALID';
 
+/**
+ * How far a candidate got before it failed.
+ *
+ * A message is checked against every signature it carries and, in the SDK,
+ * against every pinned key. Most of those attempts fail at the first hurdle,
+ * so keeping the *last* failure reports "no signature" for a message whose
+ * only real problem was a missing code — and sends whoever reads the log after
+ * a bug that is not there. The furthest attempt is the informative one.
+ */
+export const SELF_ATTESTATION_PROGRESS: Record<SelfAttestationFailure, number> = {
+  NO_SIGNATURE: 0,
+  SIGNATURE_INVALID: 1,
+  SIGNATURE_EXPIRED: 2,
+  SIGNATURE_STALE: 3,
+  FROM_NOT_SIGNED: 4,
+  FROM_UNPARSEABLE: 5,
+  DOMAIN_NOT_ALIGNED: 6,
+  DOMAIN_NOT_ALLOWED: 7,
+  CHALLENGE_MISSING: 8,
+  CHALLENGE_INVALID: 9,
+};
+
+/** Whichever of two failures got further. */
+export function furthestFailure(
+  a: SelfAttestationError | undefined,
+  b: SelfAttestationError,
+): SelfAttestationError {
+  if (a === undefined) return b;
+  return SELF_ATTESTATION_PROGRESS[b.failure] > SELF_ATTESTATION_PROGRESS[a.failure] ? b : a;
+}
+
 export class SelfAttestationError extends Error {
   constructor(
     readonly failure: SelfAttestationFailure,
@@ -154,27 +185,11 @@ export function verifySelfAttestation(
   }
 
   let furthest: SelfAttestationError | undefined;
-  const note = (error: SelfAttestationError) => {
-    const rank: Record<SelfAttestationFailure, number> = {
-      NO_SIGNATURE: 0,
-      SIGNATURE_INVALID: 1,
-      SIGNATURE_EXPIRED: 2,
-      SIGNATURE_STALE: 3,
-      FROM_NOT_SIGNED: 4,
-      FROM_UNPARSEABLE: 5,
-      DOMAIN_NOT_ALIGNED: 6,
-      DOMAIN_NOT_ALLOWED: 7,
-      CHALLENGE_MISSING: 8,
-      CHALLENGE_INVALID: 9,
-    };
-    if (furthest === undefined || rank[error.failure] > rank[furthest.failure]) furthest = error;
-  };
-
   for (const signature of signatures) {
     try {
       return checkOne(eml, raw, signature, options);
     } catch (error) {
-      if (error instanceof SelfAttestationError) note(error);
+      if (error instanceof SelfAttestationError) furthest = furthestFailure(furthest, error);
       else throw error;
     }
   }

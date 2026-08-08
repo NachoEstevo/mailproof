@@ -24,6 +24,7 @@
 import { blindIdentity, blindingKeyId } from '../shared/blinding.js';
 import { issueChallenge, type Challenge } from '../shared/challenge.js';
 import {
+  furthestFailure,
   SelfAttestationError,
   verifySelfAttestation,
   type SelfAttestation,
@@ -183,7 +184,9 @@ export function createMailProof<T extends string>(config: MailProofConfig<T>): M
           });
           break;
         } catch (error) {
-          if (error instanceof SelfAttestationError) lastFailure = error;
+          // Furthest, not last: the key that failed at the first hurdle says
+          // nothing, while the one that reached the challenge says everything.
+          if (error instanceof SelfAttestationError) lastFailure = furthestFailure(lastFailure, error);
           else throw error;
         }
       }
