@@ -106,6 +106,10 @@ code {
   background: rgba(20, 20, 15, 0.07);
   padding: 0.14em 0.38em;
   border-radius: 3px;
+  /* An address or a code is one long unbreakable token; without this it pushes
+     the whole document sideways on a phone, and the resulting scrollbar makes
+     100vh shorter than the window. */
+  overflow-wrap: anywhere;
 }
 
 pre {
@@ -216,12 +220,18 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
  */
 .hero {
   position: relative;
-  min-height: min(94vh, 900px);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-start;
-  /* Content sits in the upper half, where the picture is sky. */
-  padding: clamp(120px, 17vh, 190px) 0 clamp(240px, 40vh, 420px);
+  /* At least one full screen, never less. A capped height let the next
+     section show below the picture on a tall display, which reads as the
+     image having been cut off.
+     `vh` and not `dvh`: where a mobile browser's chrome makes them differ, vh
+     is the larger, so the worst case is a little more meadow below the fold
+     rather than a strip of the next section above it. */
+  min-height: 100vh;
+  /* Three rows rather than padding: the content lands at the same point in the
+     composition — in the sky, above the meadow — at any viewport height. */
+  display: grid;
+  grid-template-rows: 0.7fr auto 2.1fr;
+  padding: 0;
   background-color: var(--sky-deep);
   background-image: url("assets/hero.webp");
   background-repeat: no-repeat;
@@ -235,19 +245,22 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   .hero { background-image: url("assets/hero.jpg"); }
 }
 
-.hero-inner { position: relative; z-index: 2; text-align: center; }
+.hero-inner { grid-row: 2; position: relative; z-index: 2; text-align: center; }
 
 .hero h1 {
-  font-size: clamp(40px, 6.2vw, 80px);
+  /* Height matters as much as width here: on a short, wide screen a
+     width-only clamp produces a headline that pushes the buttons into the
+     grass. `min()` lets whichever dimension is scarcer win. */
+  font-size: clamp(34px, min(6.2vw, 8.4vh), 80px);
   line-height: 1.03;
   max-width: 15ch;
-  margin: 0 auto 20px;
+  margin: 0 auto clamp(10px, 1.9vh, 20px);
 }
 
 .hero p {
   max-width: 46ch;
-  margin: 0 auto 34px;
-  font-size: clamp(16.5px, 1.9vw, 20px);
+  margin: 0 auto clamp(18px, 3.4vh, 34px);
+  font-size: clamp(15px, min(1.9vw, 2.2vh), 20px);
   color: rgba(250, 241, 197, 0.84);
 }
 
@@ -428,6 +441,20 @@ footer a:hover { text-decoration-color: var(--poppy); }
   color: var(--ink-soft);
 }
 
+/* ── Short ───────────────────────────────────────────────────────────────── */
+
+/*
+ * On a wide, short screen `cover` crops the sky rather than the meadow, so the
+ * grass begins much higher up the viewport than it does on a tall one. The
+ * block has to give up room accordingly.
+ */
+@media (max-height: 820px) {
+  .hero { grid-template-rows: 0.5fr auto 2.6fr; }
+  .hero h1 { font-size: clamp(30px, min(5.4vw, 7.6vh), 62px); }
+  .hero p { margin-bottom: clamp(14px, 2.6vh, 26px); }
+  .hero-cta .btn.big { padding: 12px 18px; font-size: 14.5px; }
+}
+
 /* ── Narrow ──────────────────────────────────────────────────────────────── */
 
 @media (max-width: 900px) {
@@ -440,5 +467,10 @@ footer a:hover { text-decoration-color: var(--poppy); }
   .bar nav { gap: 16px; font-size: 13px; }
   .bar nav a:nth-child(n + 3) { display: none; }
   .page { padding: 0 20px; }
-  .hero { min-height: 88vh; padding: 108px 0 clamp(190px, 36vh, 300px); }
+  .hero { grid-template-rows: 0.55fr auto 2.3fr; }
+  /* Kept on one line: stacked, the second button reached the foliage and the
+     text lost its background. */
+  .hero-cta { gap: 8px; flex-wrap: nowrap; }
+  .hero-cta .btn.big { padding: 11px 13px; font-size: 13.5px; gap: 6px; }
+  .hero-cta .btn.big svg { display: none; }
 }
