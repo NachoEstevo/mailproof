@@ -148,9 +148,9 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   position: absolute;
   inset: 0 0 auto;
   z-index: 20;
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 24px;
   padding: 26px 40px;
 }
@@ -168,13 +168,10 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
 
 .wordmark {
   font-family: var(--serif);
-  font-size: 23px;
+  font-size: 24px;
   color: var(--paper);
-  text-align: center;
   white-space: nowrap;
 }
-
-.bar .right { display: flex; justify-content: flex-end; }
 
 /* On paper pages the header sits on cream, so the ink flips. */
 .bar.on-paper a, .bar.on-paper .wordmark { color: var(--ink); }
@@ -241,10 +238,10 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
 .hero-inner { position: relative; z-index: 2; text-align: center; }
 
 .hero h1 {
-  font-size: clamp(36px, 5.2vw, 66px);
-  line-height: 1.06;
-  max-width: 20ch;
-  margin: 0 auto 22px;
+  font-size: clamp(40px, 6.2vw, 80px);
+  line-height: 1.03;
+  max-width: 15ch;
+  margin: 0 auto 20px;
 }
 
 .hero p {
@@ -439,9 +436,9 @@ footer a:hover { text-decoration-color: var(--poppy); }
   .docs-layout { grid-template-columns: 1fr; gap: 28px; }
   .toc { position: static; }
   .toc a { display: inline-block; border-left: none; border-bottom: 2px solid var(--rule); margin-right: 14px; }
-  .bar { grid-template-columns: auto 1fr; padding: 18px 20px; }
-  .bar nav { display: none; }
-  .wordmark { text-align: left; }
+  .bar { padding: 18px 20px; }
+  .bar nav { gap: 16px; font-size: 13px; }
+  .bar nav a:nth-child(n + 3) { display: none; }
   .page { padding: 0 20px; }
   .hero { min-height: 88vh; padding: 108px 0 clamp(190px, 36vh, 300px); }
 }
