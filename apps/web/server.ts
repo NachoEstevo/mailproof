@@ -624,6 +624,11 @@ async function main(): Promise<void> {
 
         const health = await fetchHealth(config.attestorUrl).catch(() => null);
         const nullifier = toHex(attestation.claim.claimNullifier);
+        const identityHandle = attestation.opaqueIdentityHandle;
+        const identityKeyId = attestation.opaqueIdentityKeyId;
+        if (!identityHandle || !identityKeyId) {
+          throw new Error('attestor did not return an opaque identity handle');
+        }
 
         try {
           const tx = await round.contract.callTx.redeemClaim(
@@ -634,6 +639,8 @@ async function main(): Promise<void> {
             ok: true,
             tier: 'STUDENT',
             handle: nullifier,
+            identityHandle,
+            identityKeyId,
             alreadyClaimed: false,
             nullifier,
             contractAddress: round.address,
@@ -653,6 +660,8 @@ async function main(): Promise<void> {
               ok: true,
               tier: 'STUDENT',
               handle: nullifier,
+              identityHandle,
+              identityKeyId,
               alreadyClaimed: true,
               nullifier,
               contractAddress: round.address,

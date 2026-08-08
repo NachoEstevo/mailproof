@@ -22,6 +22,7 @@
  *    the integrator was not it.
  */
 import { blindIdentity, blindingKeyId } from '../shared/blinding.js';
+import { toHex } from '../shared/hashes.js';
 import { issueChallenge, type Challenge } from '../shared/challenge.js';
 import {
   furthestFailure,
@@ -93,6 +94,10 @@ export type VerificationResult<T extends string = string> =
       readonly tier: T;
       /** Stable per person per campaign. Safe to store; already blinded. */
       readonly handle: string;
+      /** Stable, keyed account identifier scoped to this SDK audience. */
+      readonly identityHandle: string;
+      /** Generation label for the key that produced `identityHandle`. */
+      readonly identityKeyId: string;
       /** Only when `reveal: 'domain'`. */
       readonly domain?: string;
       readonly alreadyClaimed: boolean;
@@ -212,6 +217,10 @@ export function createMailProof<T extends string>(config: MailProofConfig<T>): M
       }
 
       const identity = blindIdentity(attestation.mailbox, config.blindingKey);
+      const accountIdentity = blindIdentity(
+        `${config.audience}\0${attestation.mailbox}`,
+        config.blindingKey,
+      );
 
       let receipt;
       try {
@@ -231,6 +240,8 @@ export function createMailProof<T extends string>(config: MailProofConfig<T>): M
         ok: true,
         tier: match.id,
         handle: receipt.nullifier,
+        identityHandle: toHex(accountIdentity),
+        identityKeyId: keyId,
         ...(config.reveal === 'domain' ? { domain: attestation.domain } : {}),
         alreadyClaimed: receipt.outcome === 'already-claimed',
         nullifier: receipt.nullifier,

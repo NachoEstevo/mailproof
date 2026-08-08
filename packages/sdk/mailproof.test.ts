@@ -107,6 +107,9 @@ describe('the whole flow', () => {
     expect(result.tier).toBe('STUDENT');
     expect(result.alreadyClaimed).toBe(false);
     expect(result.txId).toBeDefined();
+    expect(result.identityHandle).toMatch(/^0x[0-9a-f]{64}$/);
+    expect(result.identityHandle).not.toBe(result.handle);
+    expect(result.identityKeyId).toHaveLength(16);
 
     // The address must not appear anywhere in what the integrator receives.
     expect(JSON.stringify(result)).not.toContain('ana');
@@ -146,6 +149,9 @@ describe('one benefit per mailbox', () => {
     expect(first.ok && first.alreadyClaimed).toBe(false);
     expect(second.ok && second.alreadyClaimed).toBe(true);
     expect(second.ok && second.tier).toBe('STUDENT');
+    expect(first.ok && second.ok && first.identityHandle).toBe(
+      second.ok ? second.identityHandle : undefined,
+    );
   });
 
   it('four spellings of one mailbox are one person', async () => {

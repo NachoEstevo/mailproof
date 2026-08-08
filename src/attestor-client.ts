@@ -28,6 +28,8 @@ export interface AttestationResult {
   signature: SchnorrSignature;
   attestorPublicKey: JubjubPoint;
   attestorKeyId: string;
+  opaqueIdentityHandle?: string;
+  opaqueIdentityKeyId?: string;
 }
 
 export class AttestorRejection extends Error {
@@ -103,5 +105,11 @@ export async function requestAttestation(
       y: BigInt(body.attestorPublicKey.y),
     },
     attestorKeyId: body.attestorKeyId,
+    ...(typeof body.opaqueIdentityHandle === 'string'
+      ? { opaqueIdentityHandle: body.opaqueIdentityHandle }
+      : {}),
+    ...(typeof body.opaqueIdentityKeyId === 'string'
+      ? { opaqueIdentityKeyId: body.opaqueIdentityKeyId }
+      : {}),
   };
 }

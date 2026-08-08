@@ -63,6 +63,15 @@ describe('issueChallenge', () => {
     expect(verify(code).expiresAt.getTime()).toBe(expiresAt.getTime());
   });
 
+  it('mints a fresh code for every attempt, including within one minute', () => {
+    const first = issue();
+    const second = issue();
+    expect(first.expiresAt).toEqual(second.expiresAt);
+    expect(first.code).not.toBe(second.code);
+    expect(() => verify(first.code)).not.toThrow();
+    expect(() => verify(second.code)).not.toThrow();
+  });
+
   it('refuses a secret too short to be one', () => {
     expect(() => issue({ secret: new Uint8Array(16) })).toThrow(/at least 32 bytes/);
   });

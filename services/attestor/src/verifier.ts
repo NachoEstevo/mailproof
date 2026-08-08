@@ -36,6 +36,19 @@ export interface VerifiedEvidence {
    * campaign, ever becomes public.
    */
   readonly uniqueClaimId: string;
+  /**
+   * Optional, integrator-scoped identity for account continuity.
+   *
+   * This is deliberately separate from `uniqueClaimId`: the latter feeds the
+   * public claim nullifier, while this value may be returned to the relying
+   * application. Keeping the two domains separate prevents the relying
+   * application's account identifier from being a direct copy of on-chain
+   * material. Verifiers must leave this absent unless the value is already a
+   * keyed, opaque identifier.
+   */
+  readonly opaqueIdentityHandle?: string;
+  /** Public generation label for the key that produced the opaque handle. */
+  readonly opaqueIdentityKeyId?: string;
 }
 
 export interface ProofVerifier {

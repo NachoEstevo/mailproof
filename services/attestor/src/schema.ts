@@ -63,6 +63,12 @@ export function serialiseSignedClaim(signed: SignedClaim) {
       y: `0x${signed.attestorPublicKey.y.toString(16)}`,
     },
     attestorKeyId: signed.attestorKeyId,
+    ...(signed.opaqueIdentityHandle !== undefined
+      ? { opaqueIdentityHandle: signed.opaqueIdentityHandle }
+      : {}),
+    ...(signed.opaqueIdentityKeyId !== undefined
+      ? { opaqueIdentityKeyId: signed.opaqueIdentityKeyId }
+      : {}),
   };
 }
 

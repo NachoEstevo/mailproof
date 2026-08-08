@@ -16,7 +16,7 @@
  * thing to adopt. Integrators who want single-use on top can still record the
  * code; this layer deliberately does not decide that for them.
  */
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 
 /**
  * Crockford's alphabet: no I, L, O or U. People retype these codes by hand
@@ -29,9 +29,11 @@ const PREFIX = 'MP';
 
 /** Minutes since the epoch fit in 4 bytes until the year 10000. */
 const EXPIRY_BYTES = 4;
+/** A fresh challenge even when two requests land in the same minute. */
+const NONCE_BYTES = 8;
 /** 48 bits of tag. Forging one requires 2^47 tries against a live endpoint. */
 const TAG_BYTES = 6;
-const CODE_BYTES = EXPIRY_BYTES + TAG_BYTES;
+const CODE_BYTES = EXPIRY_BYTES + NONCE_BYTES + TAG_BYTES;
 
 const MIN_SECRET_BYTES = 32;
 const DEFAULT_TTL_MS = 15 * 60 * 1000;
@@ -70,13 +72,20 @@ function assertSecret(secret: Uint8Array): void {
   }
 }
 
-function tag(secret: Uint8Array, audience: string, expiryMinutes: number): Buffer {
+function tag(
+  secret: Uint8Array,
+  audience: string,
+  expiryMinutes: number,
+  nonce: Uint8Array,
+): Buffer {
   return createHmac('sha256', secret)
-    .update('MAILPROOF:CHALLENGE:V1')
+    .update('MAILPROOF:CHALLENGE:V2')
     .update('\0')
     .update(audience, 'utf8')
     .update('\0')
     .update(String(expiryMinutes))
+    .update('\0')
+    .update(nonce)
     .digest()
     .subarray(0, TAG_BYTES);
 }
@@ -152,7 +161,12 @@ export function issueChallenge(options: IssueOptions): Challenge {
 
   const bytes = new Uint8Array(CODE_BYTES);
   new DataView(bytes.buffer).setUint32(0, expiryMinutes, false);
-  bytes.set(tag(options.secret, options.audience, expiryMinutes), EXPIRY_BYTES);
+  const nonce = randomBytes(NONCE_BYTES);
+  bytes.set(nonce, EXPIRY_BYTES);
+  bytes.set(
+    tag(options.secret, options.audience, expiryMinutes, nonce),
+    EXPIRY_BYTES + NONCE_BYTES,
+  );
 
   return { code: pretty(encode(bytes)), expiresAt: new Date(expiryMinutes * 60_000) };
 }
@@ -178,13 +192,14 @@ export function verifyChallenge(options: VerifyOptions): { expiresAt: Date } {
   if (normalised.length === 0) throw new ChallengeError('empty challenge code', 'MALFORMED');
 
   const bytes = decode(normalised);
-  if (bytes === null || bytes.length < CODE_BYTES) {
+  if (bytes === null || bytes.length !== CODE_BYTES) {
     throw new ChallengeError('challenge code is not a MailProof code', 'MALFORMED');
   }
 
   const expiryMinutes = new DataView(bytes.buffer, bytes.byteOffset).getUint32(0, false);
-  const expected = tag(options.secret, options.audience, expiryMinutes);
-  const actual = Buffer.from(bytes.subarray(EXPIRY_BYTES, CODE_BYTES));
+  const nonce = bytes.subarray(EXPIRY_BYTES, EXPIRY_BYTES + NONCE_BYTES);
+  const expected = tag(options.secret, options.audience, expiryMinutes, nonce);
+  const actual = Buffer.from(bytes.subarray(EXPIRY_BYTES + NONCE_BYTES, CODE_BYTES));
 
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
     // Indistinguishable from a code for another audience, on purpose.
