@@ -1,0 +1,12 @@
+<!--
+  The Midnight mark, rebuilt as geometry rather than shipped as a bitmap: a
+  ring and three stacked squares. It sits on cream and on cobalt in different
+  places on this site, so it takes its colour from the text around it via
+  `currentColor` instead of carrying its own.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none" role="img" aria-label="Midnight">
+  <circle cx="50" cy="50" r="36" stroke="currentColor" stroke-width="11" />
+  <rect x="44.5" y="26" width="11" height="11" fill="currentColor" />
+  <rect x="44.5" y="44.5" width="11" height="11" fill="currentColor" />
+  <rect x="44.5" y="63" width="11" height="11" fill="currentColor" />
+</svg>

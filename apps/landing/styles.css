@@ -230,7 +230,7 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   /* Three rows rather than padding: the content lands at the same point in the
      composition — in the sky, above the meadow — at any viewport height. */
   display: grid;
-  grid-template-rows: 0.96fr auto 1.84fr;
+  grid-template-rows: 0.86fr auto 1.94fr;
   padding: 0;
   background-color: var(--sky-deep);
   background-image: url("assets/hero.webp");
@@ -364,6 +364,50 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
 .caveats li { margin-bottom: 9px; }
 .caveats li:last-child { margin-bottom: 0; }
 
+/* ── Midnight mark ───────────────────────────────────────────────────────── */
+
+/*
+ * Inline rather than an <img> so it inherits the colour of whatever it sits
+ * beside — cream on cobalt in the closing band, ink on paper in the footer.
+ */
+.midnight-mark {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  vertical-align: -0.12em;
+}
+
+.built-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 26px;
+  padding: 7px 15px 7px 12px;
+  border: 1px solid rgba(250, 241, 197, 0.34);
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  color: var(--paper);
+  text-decoration: none;
+  transition: border-color 0.16s;
+}
+.built-on:hover { border-color: var(--paper); }
+.built-on .midnight-mark { width: 15px; height: 15px; }
+
+/* In the hero the badge names the network before the headline does anything
+   else, so it stays small and quiet — a credit, not a claim. */
+.hero-badge {
+  margin-bottom: clamp(14px, 2.2vh, 24px);
+  padding: 6px 13px 6px 10px;
+  font-size: 11.5px;
+  background: rgba(0, 0, 0, 0.16);
+  backdrop-filter: blur(2px);
+}
+.hero-badge .midnight-mark { width: 13px; height: 13px; }
+
+.step h3 .midnight-mark { color: var(--dandelion); width: 0.72em; height: 0.72em; }
+
 /* ── Footer ──────────────────────────────────────────────────────────────── */
 
 footer {
@@ -449,7 +493,7 @@ footer a:hover { text-decoration-color: var(--poppy); }
  * block has to give up room accordingly.
  */
 @media (max-height: 820px) {
-  .hero { grid-template-rows: 0.78fr auto 2.32fr; }
+  .hero { grid-template-rows: 0.68fr auto 2.42fr; }
   .hero h1 { font-size: clamp(30px, min(5.4vw, 7.6vh), 62px); }
   .hero p { margin-bottom: clamp(14px, 2.6vh, 26px); }
   .hero-cta .btn.big { padding: 12px 18px; font-size: 14.5px; }
@@ -467,7 +511,7 @@ footer a:hover { text-decoration-color: var(--poppy); }
   .bar nav { gap: 16px; font-size: 13px; }
   .bar nav a:nth-child(n + 3) { display: none; }
   .page { padding: 0 20px; }
-  .hero { grid-template-rows: 0.82fr auto 2.03fr; }
+  .hero { grid-template-rows: 0.72fr auto 2.13fr; }
   /* Kept on one line: stacked, the second button reached the foliage and the
      text lost its background. */
   .hero-cta { gap: 8px; flex-wrap: nowrap; }
