@@ -230,7 +230,7 @@ section { padding: clamp(72px, 10vw, 132px) 0; }
   /* Three rows rather than padding: the content lands at the same point in the
      composition — in the sky, above the meadow — at any viewport height. */
   display: grid;
-  grid-template-rows: 0.88fr auto 1.92fr;
+  grid-template-rows: 0.96fr auto 1.84fr;
   padding: 0;
   background-color: var(--sky-deep);
   background-image: url("assets/hero.webp");
@@ -449,7 +449,7 @@ footer a:hover { text-decoration-color: var(--poppy); }
  * block has to give up room accordingly.
  */
 @media (max-height: 820px) {
-  .hero { grid-template-rows: 0.68fr auto 2.42fr; }
+  .hero { grid-template-rows: 0.78fr auto 2.32fr; }
   .hero h1 { font-size: clamp(30px, min(5.4vw, 7.6vh), 62px); }
   .hero p { margin-bottom: clamp(14px, 2.6vh, 26px); }
   .hero-cta .btn.big { padding: 12px 18px; font-size: 14.5px; }
@@ -467,7 +467,7 @@ footer a:hover { text-decoration-color: var(--poppy); }
   .bar nav { gap: 16px; font-size: 13px; }
   .bar nav a:nth-child(n + 3) { display: none; }
   .page { padding: 0 20px; }
-  .hero { grid-template-rows: 0.72fr auto 2.13fr; }
+  .hero { grid-template-rows: 0.82fr auto 2.03fr; }
   /* Kept on one line: stacked, the second button reached the foliage and the
      text lost its background. */
   .hero-cta { gap: 8px; flex-wrap: nowrap; }
