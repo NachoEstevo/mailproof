@@ -27,6 +27,15 @@ export interface DkimVerificationResult {
   readonly selector: string | undefined;
   /** True when the signature carries an `x=` that has passed. */
   readonly expired: boolean;
+  /**
+   * True when `maxAgeMs` was set and the signature is older than it — or
+   * carries no `t=` at all, which is the same thing with the evidence missing.
+   * Separate from `expired` so a caller can tell "the sender said this stops
+   * being valid" from "we decided it is too old to accept".
+   */
+  readonly stale: boolean;
+  /** Seconds since the signature's `t=`, when it has one. */
+  readonly ageSeconds?: number;
 }
 
 /**
@@ -155,6 +164,23 @@ export interface VerifyOptions {
   dnsRecord: string;
   /** Defaults to now; injectable so tests are not time-dependent. */
   now?: Date;
+  /**
+   * Reject a signature older than this, by its `t=` tag.
+   *
+   * Most domains never set `x=`, and this project pins the DNS key so that
+   * verification does not depend on DNS — which also means a rotated or
+   * revoked key keeps verifying. Without an age bound, a 2014 archive is
+   * still evidence in 2026, an alumnus keeps a benefit for life, and a breach
+   * dump is a farm. Left undefined, no bound is applied.
+   */
+  maxAgeMs?: number;
+  /**
+   * Whether a signature with no `t=` at all is acceptable when `maxAgeMs` is
+   * set. Defaults to false: an unbounded-age signature is exactly what the
+   * bound exists to exclude, so silently letting it through would make the
+   * option decorative.
+   */
+  allowMissingTimestamp?: boolean;
 }
 
 /**
@@ -176,12 +202,23 @@ export function verifyDkim(
     Canonicalization,
   ];
 
+  const now = (options.now ?? new Date()).getTime();
+  const ageSeconds =
+    signature.timestamp !== undefined ? (now - signature.timestamp * 1000) / 1000 : undefined;
+
   const base = {
     domain: signature.domain,
     selector: signature.selector,
-    expired: signature.expiry !== undefined
-      ? signature.expiry * 1000 < (options.now ?? new Date()).getTime()
-      : false,
+    expired: signature.expiry !== undefined ? signature.expiry * 1000 < now : false,
+    // No `t=` counts as stale once a bound is asked for: the whole point of
+    // the bound is to exclude signatures whose age cannot be established.
+    stale:
+      options.maxAgeMs === undefined
+        ? false
+        : ageSeconds === undefined
+          ? !options.allowMissingTimestamp
+          : ageSeconds * 1000 > options.maxAgeMs,
+    ...(ageSeconds !== undefined ? { ageSeconds } : {}),
   };
 
   if (signature.algorithm !== 'rsa-sha256') {
