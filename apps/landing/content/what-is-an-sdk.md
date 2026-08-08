@@ -1,41 +1,41 @@
 ## What an SDK is
 
-An SDK — a software development kit — is the code the authors of a system publish so that everybody who integrates with it does not have to rebuild it. It is the difference between being handed the fitted parts and being handed the specification. You could write an RFC 6376 DKIM verifier, a challenge format, an address canonicaliser and a nullifier scheme yourself; the SDK is the argument that you should not have to, and that the four of them have to agree with each other to be worth anything.
+An SDK — a software development kit — is the code a system's authors publish so that everybody who integrates does not have to rebuild it: here, an RFC 6376 DKIM verifier, a challenge format, an address canonicaliser and a nullifier scheme, worth nothing unless the four agree with each other.
 
-What you install is a library. It runs inside your own process, on your own server, called from your own code — not a service you send your users to.
+What you install is a library. It runs in your own process, on your own server — not a service you send your users to.
 
 ## What the MailProof SDK does
 
-`createMailProof` returns an object with three methods, and those three methods are the whole surface. It is server-side by construction: the configuration holds `challengeSecret` and `blindingKey`, and neither may reach a browser.
+`createMailProof` returns three methods. Server-side only: the configuration holds `challengeSecret` and `blindingKey`, and neither may reach a browser.
 
-**It mints codes.** `startVerification()` returns a `code`, an `expiresAt` and an `instructions` string with the code already in it, ready to show. The code carries its own expiry and its own HMAC tag, bound to your `audience`, so verifying it needs no stored state, and a code minted for your site does not authenticate anywhere else.
+**`startVerification()`** returns `code`, `expiresAt` and `instructions`, with the code already in the text. The code carries its own expiry and an HMAC tag bound to your `audience`: verifying it needs no stored state, and it authenticates on no other site.
 
-**It reads the message.** `verify(eml)` parses the `.eml`, tries each pinned DKIM key, and for each signature checks that it verifies, that it has not passed its `x=` and is no older than `maxSignatureAgeMs` (24 hours by default), that it covers `From:`, that no unsigned instance of `From:` was prepended, that the signing domain aligns with the mailbox domain, and that the signed subject or plain-text body carries a code that authenticates for your `audience` and has not expired (`challengeTtlMs`, 15 minutes by default). When every key fails, the reason you get back is from the attempt that got furthest, not the last one tried. It then canonicalises the mailbox and folds it through a keyed hash.
+**`verify(eml)`** parses the `.eml` and tries every pinned DKIM key. A signature passes only if: it verifies; it is within its `x=` and no older than `maxSignatureAgeMs` (default 24 hours); it covers `From:`, with no unsigned instance of `From:` prepended; its signing domain aligns with the mailbox domain; and the signed subject or plain-text body carries a code that authenticates for your `audience` and has not expired (`challengeTtlMs`, default 15 minutes). When every key fails, the reason returned is from the attempt that got furthest, not the last one tried. The mailbox is then canonicalised and folded through a keyed hash.
 
-**It applies your tier rules.** `tiers` is a list; the first rule that matches the domain wins; a domain matching nothing gets no tier, never a default one. `notFreeProvider` is available and is a friction tax on casual farming, not an anti-sybil control — a dollar-a-year domain with catch-all MX defeats it. Gate anything that matters on an explicit domain list.
+It returns `{ ok: true, tier, handle, alreadyClaimed, nullifier, contractAddress, trust }` — plus `domain` under `reveal: 'domain'`, and `txId` only when a transaction was submitted, which for a repeat claim it was not — or `{ ok: false, reason, detail }`. Refusals are values, not exceptions.
 
-**It hands back a decision.** The result is `{ ok: true, tier, handle, alreadyClaimed, nullifier, contractAddress, trust }` — plus `domain` when you set `reveal: 'domain'`, and `txId` when something was actually submitted, which for a repeat claim it was not — or `{ ok: false, reason, detail }`. Expected refusals are values, not exceptions, and `alreadyClaimed` is a field, because "has this person already had their benefit" is the question you were asking.
+In `tiers`, the first matching rule wins; no match means no tier, never a default. `notFreeProvider` is a friction tax on casual farming, not an anti-sybil control — a dollar-a-year domain with catch-all MX defeats it. Gate anything that matters on an explicit domain list.
 
-`verifiableDomains()` is the third method: the domains your rules name explicitly, minus the ones you have not pinned a DKIM key for.
+**`verifiableDomains()`** returns the domains your rules name explicitly, minus those with no pinned DKIM key.
 
-## What it deliberately does not do
+## What it does not do
 
-**It does not decide what the person gets.** It answers "which tier, and is this the first time". Turning that into a discount, a plan or a badge is your code, and stays your code.
-
-**It stores nothing.** There is no table to migrate and no cache to run. Codes are self-authenticating, so nothing is written when one is issued; `handle` is returned to you to store, if you want to store it. Do not store it on the same row as an email address — that recreates the join the blinding exists to prevent.
-
-**It does not talk to a chain.** Redemption goes through `RedemptionClient`, an interface with one method. `httpRedemptionClient` is the supplied implementation: it posts the blinded identity, the campaign and the tier as JSON to `POST /api/redeem-identity` on a MailProof daemon, with a 180-second default timeout because proving is slow. The daemon in this repo does not serve that route yet — `npm run web:dev` exposes `POST /api/redeem`, which takes a whole `.eml` and streams the demo's stages back — so until it does, supply your own `RedemptionClient`. **Quickstart** shows one. Nothing in the SDK assumes the daemon is ours.
+- **Decide what the person gets.** It answers which tier, and whether this is the first time; the discount, plan or badge is your code.
+- **Store anything.** Nothing is written when a code is issued; `handle` comes back for you to store. Never on the same row as an email address — that recreates the join the blinding exists to prevent.
+- **Talk to a chain.** Redemption goes through `RedemptionClient`, one method. `httpRedemptionClient` posts the blinded identity, campaign and tier as JSON to `POST /api/redeem-identity` on a MailProof daemon; the timeout defaults to 180 seconds because proving is slow. No daemon here serves that route yet — `npm run web:dev` serves `POST /api/redeem`, which takes a whole `.eml` — so supply your own `RedemptionClient` (**Quickstart** shows one).
 
 ## The division of labour
 
-- **The SDK** — policy. Runs in the integrator's process. Holds the challenge secret and the blinding key. Decides tiers.
-- **The daemon** — chain access, proving and the wallet. `npm run web:dev`, port 3000. The only component that submits a transaction.
-- **The attestor** — signs a canonical `ClaimAttestationV1` with a Schnorr key. Its verifier is pluggable: in DKIM-direct mode, which is what this repo runs today, it is sent the raw email and checks the message's own RSA signature; with a pinned ZK Email blueprint it sees only the proof and its public outputs. `npm run attestor:dev`, port 8787.
-- **The contract** — `contracts/mailproof.compact`. Nine asserts, then one insert into `usedNullifiers`. Membership in that set is what makes a claim one-time.
+| Component | Job |
+| --- | --- |
+| **SDK** | Policy. Runs in the integrator's process. Holds the challenge secret and the blinding key. Decides tiers. |
+| **Daemon** | Chain access, proving, wallet. `npm run web:dev`, port 3000. The only component that submits a transaction. |
+| **Attestor** | Signs a canonical `ClaimAttestationV1` with a Schnorr key. Verifier is pluggable: DKIM-direct, which this repo runs today, gets the raw email and checks its RSA signature; a pinned ZK Email blueprint sees only the proof and its public outputs. `npm run attestor:dev`, port 8787. |
+| **Contract** | `contracts/mailproof.compact`. Nine asserts, then one insert into `usedNullifiers`. Membership in that set is what makes a claim one-time. |
 
-An integrator can self-host all four: the daemon and the attestor are processes in this repo, and the contract is deployed per campaign, so it is your instance holding your nullifiers.
+All four are self-hostable: the daemon and the attestor are processes in this repo, and the contract is deployed per campaign, so your instance holds your nullifiers. Nothing in the SDK assumes the daemon is ours.
 
-Something reads the raw message, and the SDK says so on every success: `result.trust` is `{ emailReadBy: 'attestor', cryptographic: true, blindingKeyId }`. Through the SDK, the DKIM check runs inside `verify()` in your own process and only the blinded identity is posted onward; in the daemon's `/api/redeem` path — the one the demo and the browser extension use — the message is sent to the attestor. Either way it is not nobody, and the attestor is trusted: if it signs a false claim, the contract accepts it. **Security model** sets out what that costs you.
+Every success carries `result.trust`: `{ emailReadBy: 'attestor', cryptographic: true, blindingKeyId }`. Through the SDK, `verify()` checks DKIM in your own process and only the blinded identity goes onward; the daemon's `/api/redeem` path — demo and browser extension — sends the raw message to the attestor. Something always reads it, and the attestor is trusted: a false claim it signs is accepted by the contract. **Security model** sets out what that costs you.
 
 ## The smallest real integration
 
@@ -73,3 +73,7 @@ export async function finish(eml: string) {
   return { granted: true }
 }
 ```
+
+Expected refusals are values, not exceptions; an unexpected error — a `.eml` that will not parse, a blinding key under 32 bytes — still throws.
+
+One caveat on the daemon: `npm run web:dev` serves `POST /api/redeem`, which takes a whole `.eml` and streams the demo's stages back as server-sent events rather than returning a JSON receipt. `httpRedemptionClient` talks to `POST /api/redeem-identity`, which is the endpoint an integrator needs.
