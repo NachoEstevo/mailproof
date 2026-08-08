@@ -74,6 +74,36 @@ import {
   selectSignaturesForDomain,
 } from '../../packages/shared/eml.js';
 
+/**
+ * Make a logged object say something.
+ *
+ * The wallet SDK builds failures with Effect, whose error objects stringify to
+ * "[object Object]" — so a production log fills with lines that name a stage
+ * and nothing else. Expanding them here costs nothing and is the difference
+ * between a diagnosable incident and a guess.
+ */
+function describe(value: unknown): string {
+  if (value instanceof Error) {
+    const cause = (value as { cause?: unknown }).cause;
+    return `${value.name}: ${value.message}${cause ? ` <- ${describe(cause)}` : ''}`;
+  }
+  if (typeof value === 'object' && value !== null) {
+    try {
+      return JSON.stringify(value, Object.getOwnPropertyNames(value)).slice(0, 1500);
+    } catch {
+      return Object.prototype.toString.call(value);
+    }
+  }
+  return String(value);
+}
+
+const baseConsoleError = console.error.bind(console);
+console.error = (...args: unknown[]) =>
+  baseConsoleError(...args.map((a) => (typeof a === 'object' && a !== null ? describe(a) : a)));
+
+process.on('unhandledRejection', (reason) => baseConsoleError('unhandledRejection:', describe(reason)));
+process.on('uncaughtException', (error) => baseConsoleError('uncaughtException:', describe(error)));
+
 // @ts-expect-error wallet sync requires WebSocket
 globalThis.WebSocket = WebSocket;
 

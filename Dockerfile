@@ -21,7 +21,10 @@ WORKDIR /app
 # Dependencies first: they change far less often than the source, so this layer
 # survives most rebuilds.
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts
+# Scripts run. `--ignore-scripts` skips the postinstall steps native and WASM
+# packages use to put the right binary in place, which produces an install
+# that looks complete and fails at the first call into it.
+RUN npm ci --omit=dev
 
 # The compiled circuit is committed, so the image needs no Compact toolchain —
 # which also means the image cannot silently ship a contract that differs from
@@ -36,6 +39,10 @@ COPY src ./src
 COPY tsconfig.json ./
 
 ENV NODE_ENV=production
+# The Midnight runtime is WASM and the first wallet sync holds a lot at once;
+# the default heap is not enough and the failure looks like a sync error
+# rather than an allocation one.
+ENV NODE_OPTIONS=--max-old-space-size=3072
 ENV SERVICE=daemon
 
 # Railway supplies PORT; the daemon reads MAILPROOF_WEB_PORT and the attestor
