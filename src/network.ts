@@ -58,23 +58,32 @@ export const NETWORK_CONFIGS: Record<NetworkId, NetworkConfig> = {
     faucet: null,
     composeServices: ['node', 'indexer', 'proof-server'],
   },
+  /*
+   * The public networks need nothing running locally, including the prover.
+   * The hosted proof server answers on /health and proves a real redeemClaim;
+   * it is slower than a local one — measured 55.9s against 31.6s — which is
+   * the whole cost of not making every integrator run a container.
+   *
+   * MIDNIGHT_PROOF_SERVER_URL overrides it, for anyone who would rather pay the
+   * container and keep the latency.
+   */
   preview: {
     networkId: 'preview',
     indexer:   'https://indexer.preview.midnight.network/api/v4/graphql',
     indexerWS: 'wss://indexer.preview.midnight.network/api/v4/graphql/ws',
     node:      'https://rpc.preview.midnight.network',
-    proofServer: 'http://127.0.0.1:6300',
+    proofServer: 'https://proof-server.preview.midnight.network',
     faucet: 'https://midnight-tmnight-preview.nethermind.dev',
-    composeServices: ['proof-server'],
+    composeServices: [],
   },
   preprod: {
     networkId: 'preprod',
     indexer:   'https://indexer.preprod.midnight.network/api/v4/graphql',
     indexerWS: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
     node:      'https://rpc.preprod.midnight.network',
-    proofServer: 'http://127.0.0.1:6300',
+    proofServer: 'https://proof-server.preprod.midnight.network',
     faucet: 'https://midnight-tmnight-preprod.nethermind.dev',
-    composeServices: ['proof-server'],
+    composeServices: [],
   },
 };
 
