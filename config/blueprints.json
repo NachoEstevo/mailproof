@@ -1,7 +1,7 @@
 {
   "$comment": [
-    "Blueprint allowlist (\u00a720.9, \u00a768.2). The attestor signs claims only for",
-    "entries listed here, and only for the exact pinned slug \u2014 never `latest`.",
+    "Blueprint allowlist (§20.9, §68.2). The attestor signs claims only for",
+    "entries listed here, and only for the exact pinned slug — never `latest`.",
     "",
     "`status` is load-bearing, not documentation. While it is \"pending\", the",
     "real ZK Email verifier refuses to run: the slug below has not been",
@@ -56,7 +56,7 @@
       "claimType": "DOMAIN_MEMBER",
       "issuerDomain": "*",
       "campaigns": [
-        "mailproof-demo-260808061113"
+        "mailproof-demo-260808145407"
       ]
     }
   ]

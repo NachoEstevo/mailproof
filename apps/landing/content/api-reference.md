@@ -193,6 +193,8 @@ A discriminated union on `ok`. Narrow on it first.
 | `ok` | `true` | Discriminant. |
 | `tier` | `T` | Id of the first `TierRule` that matched. |
 | `handle` | `string` | The value to store. Verbatim the `nullifier` your `RedemptionClient` returned; with a MailProof daemon, the campaign-scoped on-chain nullifier — stable per mailbox, campaign and blinding key. |
+| `identityHandle` | `string` | HMAC-derived account identifier scoped to `audience`, distinct from the public nullifier. Stable for the same mailbox while the blinding key is stable. |
+| `identityKeyId` | `string` | 16 lowercase hex characters naming the key generation that produced `identityHandle`. Store it with the handle and refuse silent generation changes. |
 | `domain` | `string`, optional | Only with `reveal: 'domain'`. The **mailbox** domain, not the signing domain: `ana@mail.udesa.edu.ar` signed by `d=udesa.edu.ar` reports `mail.udesa.edu.ar`. |
 | `alreadyClaimed` | `boolean` | `true` when the ledger already held this nullifier. An outcome, not an error. |
 | `nullifier` | `string` | The same string as `handle`. |
@@ -200,7 +202,7 @@ A discriminated union on `ok`. Narrow on it first.
 | `txId` | `string`, optional | Present when the receipt carried one; absent when `alreadyClaimed` is `true`, nothing having been submitted. |
 | `trust` | `TrustDisclosure` | See below. |
 
-`handle` is safe to store. **Do not store it on the same row as an email address** — that recreates the join the blinding exists to prevent.
+Both handles are safe to store without an address. Use `handle` for a campaign benefit and `identityHandle + identityKeyId` for account continuity. **Do not store either on the same row as an email address** — that recreates the join the blinding exists to prevent. The blinding key holder can recompute a handle for a guessed address, so the key stays inside the trusted attestor.
 
 #### Refusal — `ok: false`
 

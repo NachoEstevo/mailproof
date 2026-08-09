@@ -120,6 +120,10 @@ function decode(text: string): Uint8Array | null {
       bits -= 8;
     }
   }
+  // A partial final symbol is padded with zero bits by `encode`. Accepting a
+  // non-zero padding bit would give the same authenticated bytes two textual
+  // encodings (for example a trailing Y and Z for this payload length).
+  if (bits > 0 && (value & ((1 << bits) - 1)) !== 0) return null;
   return Uint8Array.from(bytes);
 }
 

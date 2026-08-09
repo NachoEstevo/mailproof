@@ -70,6 +70,10 @@ The nullifier set is public and insert-only, and mailboxes are enumerable: `blin
 - It makes the *ledger* opaque, nothing more: anyone holding `blindingKey` — through the SDK, you — can recompute the mapping for any address they can guess.
 - Rotation renames every person and silently grants everyone a second benefit; `blindingKeyId` is published so a rotation is visible.
 - It takes only the mailbox and the key, so the daemon receives the same blinded identity for one person in every campaign. The on-chain nullifier is campaign-scoped; that identity is not.
+- Account continuity uses a second derivation over `audience + mailbox`. Its
+  returned `identityHandle` is not the public nullifier and cannot be linked
+  across integrators with different audiences. It still changes on key
+  rotation, so the key must be backed up and rotated only with migration.
 
 ### Canonicalisation is a security control
 
@@ -93,6 +97,6 @@ The nullifier set is public and insert-only, and mailboxes are enumerable: `blin
 
 ### Malicious integrator versus malicious attestor
 
-**A malicious integrator** gets little *from the protocol*: no address in the return value — the SDK's own test asserts that neither the local part nor the domain appears anywhere in it — and the daemon receives 32 blinded bytes, the campaign name and the tier id. `reveal: 'tier'` discloses "is a student"; `reveal: 'domain'` is the larger ask. But `verify(eml)` runs in the caller's process: whoever calls it holds the raw message for that call, and the blinding key permanently. The guarantee covers what is downstream — the handle you store, the ledger, any later reader of your database — not a party already holding the message. Store `result.handle`, never on the same row as an email address: that recreates the join blinding exists to prevent.
+**A malicious integrator** gets little *from the protocol*: no address in the return value — the SDK's own test asserts that neither the local part nor the domain appears anywhere in it — and the daemon receives 32 blinded bytes, the campaign name and the tier id. `reveal: 'tier'` discloses "is a student"; `reveal: 'domain'` is the larger ask. But `verify(eml)` runs in the caller's process: whoever calls it holds the raw message for that call, and the blinding key permanently. The guarantee covers what is downstream — the handles you store, the ledger, any later reader of your database — not a party already holding the message. Store the campaign handle or account handle, never on the same row as an email address: that recreates the join blinding exists to prevent.
 
 **A malicious attestor** can do a great deal. It reads every message sent to it in DKIM-direct mode, and holds the signing key the contract pins, so it can mint claims for identities that never existed and burn nullifiers belonging to people who never showed up — no assert in the circuit stands between it and that. It never receives your blinding key (`httpRedemptionClient` posts only the blinded identity, the campaign and the tier), so it cannot test a guessed address against the set, but it can link one person across campaigns: the identity it is handed is not campaign-scoped.

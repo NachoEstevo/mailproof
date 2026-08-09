@@ -21,7 +21,7 @@ In `tiers`, the first matching rule wins; no match means no tier, never a defaul
 ## What it does not do
 
 - **Decide what the person gets.** It answers which tier, and whether this is the first time; the discount, plan or badge is your code.
-- **Store anything.** Nothing is written when a code is issued; `handle` comes back for you to store. Never on the same row as an email address — that recreates the join the blinding exists to prevent.
+- **Store anything.** Nothing is written when a code is issued. `handle` comes back for a campaign grant; `identityHandle + identityKeyId` come back when an email-free account must recognize the same mailbox later. Never store either beside an email address — that recreates the join the blinding exists to prevent.
 - **Talk to a chain.** Redemption goes through `RedemptionClient`, one method. `httpRedemptionClient` posts the blinded identity, campaign and tier as JSON to `POST /api/redeem-identity` on a MailProof daemon; the timeout defaults to 180 seconds because proving is slow. No daemon here serves that route yet — `npm run web:dev` serves `POST /api/redeem`, which takes a whole `.eml` — so supply your own `RedemptionClient` (**Quickstart** shows one).
 
 ## The division of labour

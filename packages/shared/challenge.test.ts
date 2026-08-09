@@ -20,6 +20,7 @@ import {
 const SECRET = new Uint8Array(randomBytes(32));
 const OTHER_SECRET = new Uint8Array(randomBytes(32));
 const NOW = new Date('2026-08-08T12:00:00Z');
+const CROCKFORD_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 
 const issue = (over: Partial<Parameters<typeof issueChallenge>[0]> = {}) =>
   issueChallenge({ secret: SECRET, audience: 'lain', now: NOW, ...over });
@@ -112,8 +113,19 @@ describe('verifyChallenge', () => {
 
   it('rejects a code with a flipped character', () => {
     const { code } = issue();
-    const flipped = code.slice(0, -1) + (code.endsWith('Z') ? 'Y' : 'Z');
+    const flipped =
+      code.slice(0, 3) + (code[3] === 'Z' ? 'Y' : 'Z') + code.slice(4);
     expect(() => verify(flipped)).toThrow(ChallengeError);
+  });
+
+  it('rejects a non-zero Base32 padding bit', () => {
+    const { code } = issue();
+    const finalIndex = CROCKFORD_ALPHABET.indexOf(code.at(-1)!);
+    expect(finalIndex).toBeGreaterThanOrEqual(0);
+    expect(finalIndex % 2).toBe(0);
+
+    const nonCanonical = code.slice(0, -1) + CROCKFORD_ALPHABET[finalIndex + 1];
+    expect(() => verify(nonCanonical)).toThrow(/not a MailProof code/);
   });
 
   it('accepts right up to the expiry and not past it', () => {

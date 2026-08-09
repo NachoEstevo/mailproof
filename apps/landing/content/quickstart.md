@@ -149,9 +149,16 @@ app.post<{ Body: { eml: string } }>('/api/verify/finish', async (request, reply)
 
 ### 6. What to store
 
-Store `result.handle` with the tier, the campaign and the `blindingKeyId`: one keyed-hash value per person, stable, opaque without your `blindingKey`.
+Store `result.handle` with the tier and campaign to enforce a one-time benefit.
+For a returning account, store `result.identityHandle` with
+`result.identityKeyId`: one audience-scoped HMAC value per mailbox, stable
+while the blinding key is stable and distinct from the on-chain nullifier.
 
-Never on the same row as an email address. The nullifier set is public and insert-only, and a bare mailbox hash falls to a wordlist — hence the blinding. A row with both re-creates that join for whoever later reads or breaches the database. Keep addresses in a table with no handle column.
+Never store either handle on the same row as an email address. The nullifier set is public and insert-only, and a bare mailbox hash falls to a wordlist — hence the blinding. A row with both re-creates that join for whoever later reads or breaches the database. An email-free account needs no address table at all.
+
+Back up `MAILPROOF_BLINDING_KEY`. A silent rotation changes both handle
+generations and makes a returning mailbox look new; use `identityKeyId` to
+detect that condition and perform an explicit migration.
 
 `verify` runs the DKIM check in your own process, so the raw bytes are in your server's memory for the call; in the daemon pipeline the attestor sees them. `trust.emailReadBy` is the constant `'attestor'` either way. Nothing but hashes reaches the chain.
 

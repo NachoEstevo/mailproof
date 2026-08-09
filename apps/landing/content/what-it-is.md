@@ -20,7 +20,7 @@ if (result.ok && result.tier === 'STUDENT' && !result.alreadyClaimed) {
 }
 ```
 
-`result.tier` comes from your own rules — domains, suffixes, or a catch-all; `result.alreadyClaimed` is a field, not a thrown error. Store `result.handle`: a keyed hash, stable enough to enforce "once" and opaque to anyone without your `blindingKey` — the ledger, and anyone reading your database later. `verify` reads the mailbox out of the signed `From:` and returns only the hash; no field of the result is an address, a name or an inbox.
+`result.tier` comes from your own rules — domains, suffixes, or a catch-all; `result.alreadyClaimed` is a field, not a thrown error. Store `result.handle` to enforce a campaign once, or the distinct `result.identityHandle + identityKeyId` to recognize the same mailbox as an account later. Both are keyed and opaque without your `blindingKey`; neither is an address, a name or an inbox.
 
 ## Why email is the right source of truth
 

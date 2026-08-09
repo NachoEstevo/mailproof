@@ -104,13 +104,25 @@ had their benefit" is the question you are actually asking.
 
 ## What you store
 
-Store `result.handle`. It is a keyed hash — one value per mailbox per campaign,
-stable, and not reversible by you or anyone else. It is what makes "one per
-person" enforceable without holding a person.
+For a one-time benefit, store `result.handle`: the campaign-scoped Midnight
+nullifier. For account continuity, store `result.identityHandle` together with
+`result.identityKeyId`. The account handle is HMAC-derived from the audience
+and canonical mailbox, so the same mailbox returns to the same account while a
+different mailbox at the same domain does not.
 
-**Do not store it on the same row as an email address.** Doing so recreates
+The two handles are deliberately different. `handle` is public chain material;
+`identityHandle` is scoped to this relying application and must not be copied
+from the nullifier. Both are opaque to anyone without the blinding key, but the
+attestor holding that key can recompute them for a guessed address.
+
+**Do not store either handle on the same row as an email address.** Doing so recreates
 exactly the join the blinding exists to prevent, for anyone who later reads
 your database.
+
+`blindingKey` is durable identity infrastructure. Back it up and keep it
+server-only. Rotating it without a migration changes every `identityHandle` and
+would make returning users look new; `identityKeyId` makes that generation
+change visible.
 
 ## What you must be honest about
 
